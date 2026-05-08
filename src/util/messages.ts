@@ -6,6 +6,14 @@
 
 export type Mode = "agent" | "plan" | "ask" | "multitask" | "debug";
 
+/**
+ * Per-run permission override. Orthogonal to Mode:
+ *   - "default":     normal canUseTool gating on Edit/Write/Bash
+ *   - "acceptEdits": SDK auto-approves edits (no prompts)
+ *   - "readOnly":    intersect mode tool list with READ_ONLY_TOOLS for this run
+ */
+export type PermissionOverride = "default" | "acceptEdits" | "readOnly";
+
 export type WorkspaceFile = {
   path: string;
   rel: string;
@@ -40,6 +48,8 @@ export type StreamItem =
       id: string;
       messageId?: string;
       parentToolUseId?: string | null;
+      /** The mode that was active when this text was produced (used by Plan-view extraction). */
+      mode?: Mode;
     }
   | {
       kind: "tool_use";
@@ -69,6 +79,13 @@ export type StreamItem =
       sessionId?: string;
     };
 
+export type PermissionBaseline = {
+  /** SDK permissionMode; only "default" or "acceptEdits" can be a baseline. */
+  permissionMode: "default" | "acceptEdits";
+  /** Tool allowlist persisted to workspace settings. */
+  allowedTools: string[];
+};
+
 export type ExtToWebviewMessage =
   | { type: "ready" }
   | {
@@ -79,6 +96,7 @@ export type ExtToWebviewMessage =
       cwd: string | null;
       sessionId: string | null;
       mode: Mode;
+      allowedTools: string[];
     }
   | { type: "stream"; item: StreamItem }
   | { type: "running"; running: boolean }
@@ -89,11 +107,12 @@ export type ExtToWebviewMessage =
   | { type: "transcriptCleared" }
   | { type: "info"; text: string }
   | { type: "contextUsage"; usage: ContextUsage }
-  | { type: "modeChanged"; mode: Mode };
+  | { type: "modeChanged"; mode: Mode }
+  | { type: "permissionBaseline"; baseline: PermissionBaseline };
 
 export type WebviewToExtMessage =
   | { type: "webviewReady" }
-  | { type: "send"; text: string; mode?: Mode }
+  | { type: "send"; text: string; mode?: Mode; permissionModeOverride?: PermissionOverride }
   | { type: "stop" }
   | {
       type: "approval-response";
@@ -106,4 +125,11 @@ export type WebviewToExtMessage =
   | { type: "openFile"; path: string }
   | { type: "openExternal"; url: string }
   | { type: "setMode"; mode: Mode }
-  | { type: "setModel"; model: string };
+  | { type: "setModel"; model: string }
+  | {
+      type: "acceptPlan";
+      permissionModeOverride: "acceptEdits" | "default";
+      followUp?: string;
+    }
+  | { type: "openPlanInEditor"; content: string }
+  | { type: "setPermissionBaseline"; baseline: PermissionBaseline };

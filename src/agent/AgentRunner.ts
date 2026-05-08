@@ -17,10 +17,11 @@ async function loadQuery(): Promise<QueryFn> {
 import type { SecretsStore } from "../auth/secrets";
 import type { SessionStore } from "./sessionStore";
 import { ToolApprovalBridge } from "./toolApproval";
-import type { StreamItem } from "../util/messages";
-import { MODE_DEFS, type Mode } from "./modes";
+import type { PermissionOverride, StreamItem } from "../util/messages";
+import { MODE_DEFS, READ_ONLY_TOOLS, type Mode } from "./modes";
 import { loadProjectContext } from "./contextLoader";
 import { TokenTracker } from "./tokenTracker";
+import { buildWorkspaceContext, type WorkspaceIndex } from "./workspaceIndexer";
 
 let nextId = 1;
 const id = () => `m_${nextId++}`;
@@ -29,6 +30,7 @@ type RunOptions = {
   prompt: string;
   resumeSessionId?: string | null;
   mode?: Mode;
+  permissionModeOverride?: PermissionOverride;
 };
 
 export class AgentRunner {
@@ -37,6 +39,7 @@ export class AgentRunner {
   public approval: ToolApprovalBridge;
   private currentMode: Mode = "agent";
   private tokens = new TokenTracker();
+  private wsContext: WorkspaceIndex | null = null;
 
   constructor(
     private readonly provider: ChatViewProvider,
@@ -72,17 +75,23 @@ export class AgentRunner {
     this.provider.post({ type: "modeChanged", mode: m });
   }
 
+  /** Drop the cached workspace index. Bound to file-save events from extension.ts. */
+  invalidateContext(): void {
+    this.wsContext = null;
+  }
+
   async newSession(): Promise<void> {
     this.stop();
     this.currentSessionId = null;
     this.tokens.reset();
+    this.wsContext = null;
     this.provider.post({ type: "contextUsage", usage: this.tokens.snapshot() });
     await this.sessionStore.clear();
     this.provider.post({ type: "session", sessionId: null });
     this.provider.post({ type: "transcriptCleared" });
   }
 
-  async run({ prompt, resumeSessionId, mode }: RunOptions): Promise<void> {
+  async run({ prompt, resumeSessionId, mode, permissionModeOverride }: RunOptions): Promise<void> {
     if (this.isRunning()) {
       this.provider.post({
         type: "stream",
@@ -111,7 +120,7 @@ export class AgentRunner {
     const cfg = vscode.workspace.getConfiguration("claudeCoder");
     const model = cfg.get<string>("model", "claude-sonnet-4-5");
     const maxTurns = cfg.get<number>("maxTurns", 50);
-    const permissionMode = cfg.get<string>("permissionMode", "default") as
+    const baselinePerm = cfg.get<string>("permissionMode", "default") as
       | "default"
       | "acceptEdits"
       | "bypassPermissions";
@@ -127,10 +136,26 @@ export class AgentRunner {
       "WebFetch",
     ]);
 
-    // Intersect mode tools with user-enabled tools, preserving any mode-only
-    // tools (e.g. Agent in Multitask) that aren't in the user's enabled set.
+    // 1) Start from the mode's tool list, intersect with user's allowedTools.
+    //    Preserve any mode-only tools (e.g. Agent in Multitask) so the mode's
+    //    machinery still works even if the user hasn't enabled them globally.
     const modeOnly = def.tools.filter((t) => !userTools.includes(t));
-    const enabledTools = [...userTools.filter((t) => def.tools.includes(t)), ...modeOnly];
+    let enabledTools = [...userTools.filter((t) => def.tools.includes(t)), ...modeOnly];
+
+    // 2) Permission override: "readOnly" intersects with READ_ONLY_TOOLS for
+    //    this run (cleaner than flipping to a `dontAsk` mode since Mode and
+    //    Permission stay orthogonal).
+    if (permissionModeOverride === "readOnly") {
+      enabledTools = enabledTools.filter((t) => READ_ONLY_TOOLS.includes(t));
+    }
+
+    // 3) Resolve the SDK permissionMode:
+    //    override("default"|"acceptEdits") → workspace baseline → "default".
+    let permissionMode: "default" | "acceptEdits" | "bypassPermissions";
+    if (permissionModeOverride === "acceptEdits") permissionMode = "acceptEdits";
+    else if (permissionModeOverride === "default") permissionMode = "default";
+    else if (permissionModeOverride === "readOnly") permissionMode = "default";
+    else permissionMode = baselinePerm;
 
     // Pre-approve list — read-only set in plan/ask, gated edits in agent/etc.
     const preApproved =
@@ -143,7 +168,7 @@ export class AgentRunner {
 
     this.tokens.setModel(model);
 
-    // CLAUDE.md / AGENTS.md / .cursorrules
+    // CLAUDE.md / AGENTS.md / .cursorrules — highest-priority user-curated context
     const ctx = await loadProjectContext(cwd);
     if (ctx.loaded.length > 0) {
       const summary = ctx.loaded
@@ -155,7 +180,27 @@ export class AgentRunner {
       });
     }
 
-    const appended = [def.prompt, ctx.combined].filter(Boolean).join("\n\n");
+    // Workspace tree + key-file excerpts (cached per session, invalidated on save).
+    if (!this.wsContext && cwd) {
+      this.wsContext = await buildWorkspaceContext(cwd);
+      if (this.wsContext) {
+        this.provider.post({
+          type: "stream",
+          item: {
+            kind: "system",
+            id: id(),
+            text: `Indexed workspace: ${this.wsContext.fileCount} files in ${this.wsContext.dirCount} directories (${(this.wsContext.bytes / 1024).toFixed(1)} KB)`,
+          },
+        });
+      }
+    }
+
+    // System-prompt order: CLAUDE.md/AGENTS.md → workspace tree+excerpts → mode prompt.
+    const sysSections: string[] = [];
+    if (ctx.combined) sysSections.push(ctx.combined);
+    if (this.wsContext?.text) sysSections.push(this.wsContext.text);
+    if (def.prompt) sysSections.push(def.prompt);
+    const appended = sysSections.join("\n\n---\n\n");
 
     this.abortController = new AbortController();
     this.approval = new ToolApprovalBridge(this.provider, cwd);
@@ -166,6 +211,20 @@ export class AgentRunner {
       item: { kind: "user", id: id(), text: prompt, mode: activeMode },
     });
 
+    // Surface the resolved permission for this run when it differs from the baseline.
+    if (permissionModeOverride && permissionModeOverride !== baselinePerm) {
+      const label =
+        permissionModeOverride === "acceptEdits"
+          ? "Auto-approve edits"
+          : permissionModeOverride === "readOnly"
+            ? "Read-only"
+            : "Ask first";
+      this.provider.post({
+        type: "stream",
+        item: { kind: "system", id: id(), text: `Permission for this run: ${label}` },
+      });
+    }
+
     const useApproval = def.useApproval && permissionMode === "default";
 
     const opts: Options = {
@@ -173,16 +232,13 @@ export class AgentRunner {
       model,
       maxTurns,
       allowedTools: preApproved,
-      // tools acts as a hard whitelist for the SDK; mode tools list defines availability.
-      // (newer SDK wants `disallowedTools`/`allowedTools` only, but `tools` is still honored.)
-      // Keeping enabledTools here preserves prior behaviour without surprising the SDK.
       tools: enabledTools,
       permissionMode,
       abortController: this.abortController,
       env: {
         ...process.env,
         ANTHROPIC_API_KEY: apiKey,
-        CLAUDE_AGENT_SDK_CLIENT_APP: "claude-coder/0.0.2",
+        CLAUDE_AGENT_SDK_CLIENT_APP: "claude-coder/0.0.3",
       } as Record<string, string | undefined>,
       ...(systemPromptOverride
         ? { systemPrompt: systemPromptOverride }
@@ -197,7 +253,7 @@ export class AgentRunner {
     try {
       const query = await loadQuery();
       for await (const m of query({ prompt, options: opts })) {
-        await this.handleMessage(m);
+        await this.handleMessage(m, activeMode);
       }
     } catch (err: unknown) {
       const text = err instanceof Error ? err.message : String(err);
@@ -216,7 +272,7 @@ export class AgentRunner {
     }
   }
 
-  private async handleMessage(m: SDKMessage): Promise<void> {
+  private async handleMessage(m: SDKMessage, runMode: Mode): Promise<void> {
     switch (m.type) {
       case "system": {
         if ((m as { subtype?: string }).subtype === "init") {
@@ -247,7 +303,6 @@ export class AgentRunner {
           parent_tool_use_id: string | null;
         };
         const parentId = am.parent_tool_use_id ?? null;
-        // Per-turn streamed usage (cumulative across the assistant message).
         const usage = (am.message as { usage?: unknown }).usage as
           | {
               input_tokens?: number;
@@ -269,6 +324,7 @@ export class AgentRunner {
                 text: b.text,
                 messageId: am.message.id,
                 parentToolUseId: parentId,
+                mode: runMode,
               },
             });
           } else if (b.type === "tool_use") {
@@ -324,7 +380,6 @@ export class AgentRunner {
         const success = r.subtype === "success";
         this.currentSessionId = r.session_id;
         await this.sessionStore.save(r.session_id);
-        // Result usage is cumulative for the whole turn (authoritative).
         this.tokens.ingestResultUsage(
           r.usage as
             | {

@@ -27,10 +27,13 @@ export const ALL_TOOLS = [
 export const READ_ONLY_TOOLS = ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "TodoWrite"];
 
 const PLAN_PROMPT =
-  "You are in PLAN mode. Explore the codebase carefully (Read/Glob/Grep) and produce a clear, " +
-  "numbered implementation plan as your final assistant message. Do NOT call Edit, Write, or Bash. " +
-  "Do NOT modify files. Surface assumptions, risks, and out-of-scope items. " +
-  "Wait for the user to switch to Agent mode to execute.";
+  "You are in PLAN mode.\n" +
+  "Step 1 — Before writing any plan, ask the user exactly 2 clarifying questions about scope, " +
+  "constraints, or ambiguities. Number them `1.` and `2.` (each on its own line). Do not write " +
+  "the plan yet. Do not call any tools yet.\n" +
+  "Step 2 — After the user answers, explore the codebase (Read/Glob/Grep), then write a numbered " +
+  "implementation plan as your final assistant message. Do NOT call Edit, Write, or Bash. " +
+  "Surface assumptions, risks, and out-of-scope items.";
 
 const ASK_PROMPT =
   "You are in ASK mode. Answer the user's question conversationally. " +

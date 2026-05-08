@@ -8,6 +8,7 @@ import { findFiles } from "../util/workspaceFiles";
 import type { ToolApprovalBridge } from "../agent/toolApproval";
 import type { ExtToWebviewMessage, WebviewToExtMessage } from "../util/messages";
 import { isMode } from "../agent/modes";
+import type { PlanDocProvider } from "../agent/planDocProvider";
 
 function nonce(): string {
   let text = "";
@@ -15,6 +16,8 @@ function nonce(): string {
   for (let i = 0; i < 32; i++) text += chars.charAt(Math.floor(Math.random() * chars.length));
   return text;
 }
+
+const DEFAULT_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"];
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "claude-coder.chat";
@@ -27,6 +30,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly context: vscode.ExtensionContext,
     private readonly secrets: SecretsStore,
     private readonly sessionStore: SessionStore,
+    private readonly planDocProvider: PlanDocProvider,
   ) {
     this.runner = new AgentRunner(this, secrets, sessionStore);
   }
@@ -45,6 +49,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   async newSession(): Promise<void> {
     await this.runner.newSession();
+  }
+
+  /** Called from the debounced workspace save listener in extension.ts. */
+  invalidateContext(): void {
+    this.runner.invalidateContext();
   }
 
   async resolveWebviewView(view: vscode.WebviewView): Promise<void> {
@@ -86,6 +95,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       cwd: this.sessionStore.workspaceRoot(),
       sessionId: this.sessionStore.get(),
       mode: this.runner.mode(),
+      allowedTools: cfg.get<string[]>("allowedTools", DEFAULT_TOOLS),
     });
   }
 
@@ -95,7 +105,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await this.sendInit();
         return;
       case "send":
-        await this.runner.run({ prompt: msg.text, mode: msg.mode });
+        await this.runner.run({
+          prompt: msg.text,
+          mode: msg.mode,
+          permissionModeOverride: msg.permissionModeOverride,
+        });
         return;
       case "setMode":
         if (isMode(msg.mode)) this.runner.setMode(msg.mode);
@@ -139,6 +153,42 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case "openExternal":
         await vscode.env.openExternal(vscode.Uri.parse(msg.url));
         return;
+      case "acceptPlan": {
+        // Switch the runner into Agent mode so the next turn has the full toolset.
+        this.runner.setMode("agent");
+        // Fire-and-forget: do NOT await here, otherwise subsequent webview messages
+        // (Stop, approval responses, etc.) queue up behind this run's lifecycle.
+        const followUp = msg.followUp?.trim();
+        const prompt = followUp
+          ? `Execute the plan you just produced. Additional instruction: ${followUp}`
+          : "Execute the plan you just produced. Proceed step by step. After each numbered step, briefly confirm it's done before moving on.";
+        void this.runner.run({
+          prompt,
+          mode: "agent",
+          permissionModeOverride: msg.permissionModeOverride,
+        });
+        return;
+      }
+      case "openPlanInEditor": {
+        await vscode.commands.executeCommand("claude-coder.openPlanInEditor", msg.content);
+        return;
+      }
+      case "setPermissionBaseline": {
+        const cfg = vscode.workspace.getConfiguration("claudeCoder");
+        await cfg.update(
+          "permissionMode",
+          msg.baseline.permissionMode,
+          vscode.ConfigurationTarget.Workspace,
+        );
+        await cfg.update(
+          "allowedTools",
+          msg.baseline.allowedTools,
+          vscode.ConfigurationTarget.Workspace,
+        );
+        this.post({ type: "permissionBaseline", baseline: msg.baseline });
+        this.post({ type: "info", text: "Saved permission baseline to workspace settings." });
+        return;
+      }
     }
   }
 
@@ -154,7 +204,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const n = nonce();
     const cspSource = webview.cspSource;
 
-    // Rewrite "/assets/..." (Vite default) and "./assets/..." to webview URIs.
     html = html.replace(/(src|href)="\/?(assets\/[^"]+)"/g, (_m, attr: string, p: string) => {
       const uri = webview.asWebviewUri(vscode.Uri.joinPath(distRoot, p));
       return `${attr}="${uri.toString()}"`;
