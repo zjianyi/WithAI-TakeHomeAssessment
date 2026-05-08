@@ -33,7 +33,7 @@ export class SecretsStore {
     });
     if (!value) return undefined;
     await this.set(value.trim());
-    void vscode.window.showInformationMessage("Claude Coder: API key saved.");
+    void vscode.window.showInformationMessage("Craig Code: API key saved.");
     return value.trim();
   }
 }

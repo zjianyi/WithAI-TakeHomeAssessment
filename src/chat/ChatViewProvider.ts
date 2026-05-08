@@ -218,7 +218,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case "mirrorToTerminal": {
         const root = this.sessionStore.workspaceRoot();
         const term = vscode.window.createTerminal({
-          name: "Claude Coder",
+          name: "Craig Code",
           cwd: root ?? undefined,
         });
         term.show(true);
@@ -269,7 +269,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const indexHtmlPath = vscode.Uri.joinPath(distRoot, "index.html").fsPath;
     if (!fs.existsSync(indexHtmlPath)) {
       return `<!doctype html><html><body style="font-family:system-ui;padding:1rem;background:#1a1a1a;color:#e6e6e6">
-        <h3>Claude Coder webview not built</h3>
+        <h3>Craig Code webview not built</h3>
         <p>Run <code>npm run build</code> in the extension folder, then reload the window.</p>
       </body></html>`;
     }

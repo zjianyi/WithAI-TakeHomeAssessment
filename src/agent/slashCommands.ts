@@ -62,7 +62,7 @@ export type SlashCommand =
 // Prompt templates
 // ─────────────────────────────────────────────────────────────────────────────
 
-const INIT_PROMPT = `Please analyze this codebase and create a CLAUDE.md file at the workspace root, which will be loaded into every future Claude Coder session in this repo.
+const INIT_PROMPT = `Please analyze this codebase and create a CLAUDE.md file at the workspace root, which will be loaded into every future Craig Code session in this repo.
 
 What to add:
 1. Commands that will be commonly used: how to build, lint, run tests (and a single test). Include the actual scripts from package.json / Makefile / etc., not generic placeholders.
@@ -81,7 +81,7 @@ Usage notes:
 \`\`\`
 # CLAUDE.md
 
-This file provides guidance to Claude Coder when working with code in this repository.
+This file provides guidance to Craig Code when working with code in this repository.
 \`\`\``;
 
 const REVIEW_PROMPT = (args: string) => `You are an expert code reviewer. Follow these steps:

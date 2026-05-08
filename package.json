@@ -1,8 +1,8 @@
 {
   "name": "claude-coder",
-  "displayName": "Claude Coder",
+  "displayName": "Craig Code",
   "description": "Agentic coding in VS Code with Cursor-style mode switching, parallel subagents, workspace indexer, plan view, and per-run permission control — powered by the Claude Agent SDK.",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "publisher": "withai",
   "repository": {
     "type": "git",
@@ -22,7 +22,7 @@
       "activitybar": [
         {
           "id": "claude-coder",
-          "title": "Claude Coder",
+          "title": "Craig Code",
           "icon": "media/sidebar-icon.svg"
         }
       ]
@@ -34,40 +34,40 @@
           "id": "claude-coder.chat",
           "name": "Chat",
           "icon": "media/sidebar-icon.svg",
-          "contextualTitle": "Claude Coder"
+          "contextualTitle": "Craig Code"
         }
       ]
     },
     "commands": [
       {
         "command": "claude-coder.openChat",
-        "title": "Claude Coder: Focus Chat",
-        "category": "Claude Coder"
+        "title": "Craig Code: Focus Chat",
+        "category": "Craig Code"
       },
       {
         "command": "claude-coder.newSession",
-        "title": "Claude Coder: New Session",
-        "category": "Claude Coder"
+        "title": "Craig Code: New Session",
+        "category": "Craig Code"
       },
       {
         "command": "claude-coder.setApiKey",
-        "title": "Claude Coder: Set Anthropic API Key…",
-        "category": "Claude Coder"
+        "title": "Craig Code: Set Anthropic API Key…",
+        "category": "Craig Code"
       },
       {
         "command": "claude-coder.clearApiKey",
-        "title": "Claude Coder: Clear Anthropic API Key",
-        "category": "Claude Coder"
+        "title": "Craig Code: Clear Anthropic API Key",
+        "category": "Craig Code"
       },
       {
         "command": "claude-coder.stop",
-        "title": "Claude Coder: Stop",
-        "category": "Claude Coder"
+        "title": "Craig Code: Stop",
+        "category": "Craig Code"
       },
       {
         "command": "claude-coder.openPlanInEditor",
-        "title": "Claude Coder: Open Current Plan in Editor",
-        "category": "Claude Coder"
+        "title": "Craig Code: Open Current Plan in Editor",
+        "category": "Craig Code"
       }
     ],
     "keybindings": [
@@ -79,7 +79,7 @@
       }
     ],
     "configuration": {
-      "title": "Claude Coder",
+      "title": "Craig Code",
       "properties": {
         "claudeCoder.model": {
           "type": "string",

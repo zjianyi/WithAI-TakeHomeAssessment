@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run Claude Coder Extension",
+      "name": "Run Craig Code Extension",
       "type": "extensionHost",
       "request": "launch",
       "args": [

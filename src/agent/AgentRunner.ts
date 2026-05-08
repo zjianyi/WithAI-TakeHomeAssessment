@@ -42,6 +42,13 @@ export class AgentRunner {
   private wsContext: WorkspaceIndex | null = null;
   /** Cached cost/duration of the last completed run (for /cost). */
   private lastRunResult: { cost?: number; ms?: number } | null = null;
+  /**
+   * `includePartialMessages` emits `stream_event` chunks before the final
+   * `assistant` message; the final message repeats full text/thinking blocks.
+   */
+  private streamMsgId: string | null = null;
+  private streamHadText = false;
+  private streamHadThinking = false;
 
   constructor(
     private readonly provider: ChatViewProvider,
@@ -113,7 +120,7 @@ export class AgentRunner {
         item: {
           kind: "error",
           id: id(),
-          text: "No Anthropic API key set. Run `Claude Coder: Set Anthropic API Key…` from the command palette.",
+          text: "No Anthropic API key set. Run `Craig Code: Set Anthropic API Key…` from the command palette.",
         },
       });
       return;
@@ -249,7 +256,7 @@ export class AgentRunner {
       env: {
         ...process.env,
         ANTHROPIC_API_KEY: apiKey,
-        CLAUDE_AGENT_SDK_CLIENT_APP: "claude-coder/0.0.5",
+        CLAUDE_AGENT_SDK_CLIENT_APP: "craig-code/0.0.6",
       } as Record<string, string | undefined>,
       ...(systemPromptOverride
         ? { systemPrompt: systemPromptOverride }
@@ -261,6 +268,7 @@ export class AgentRunner {
       ...(resume ? { resume } : {}),
       effort,
       thinking: thinkingEnabled ? { type: "adaptive" } : { type: "disabled" },
+      includePartialMessages: true,
     };
 
     try {
@@ -287,6 +295,61 @@ export class AgentRunner {
 
   private async handleMessage(m: SDKMessage, runMode: Mode): Promise<void> {
     switch (m.type) {
+      case "stream_event": {
+        const sm = m as unknown as {
+          type: "stream_event";
+          event: Record<string, unknown>;
+          parent_tool_use_id: string | null;
+        };
+        const ev = sm.event;
+        const evType = ev.type as string | undefined;
+
+        if (evType === "message_start") {
+          const msg = ev.message as { id?: string } | undefined;
+          this.streamMsgId = msg?.id ? String(msg.id) : null;
+          this.streamHadText = false;
+          this.streamHadThinking = false;
+          break;
+        }
+
+        if (evType === "content_block_delta") {
+          const delta = ev.delta as { type?: string; text?: string; thinking?: string } | undefined;
+          if (!delta?.type) break;
+          const parentId = sm.parent_tool_use_id ?? null;
+
+          if (delta.type === "text_delta" && typeof delta.text === "string" && delta.text.length > 0) {
+            this.streamHadText = true;
+            this.provider.post({
+              type: "stream",
+              item: {
+                kind: "assistant_text",
+                id: id(),
+                text: delta.text,
+                messageId: this.streamMsgId ?? undefined,
+                parentToolUseId: parentId,
+                mode: runMode,
+              },
+            });
+          } else if (
+            delta.type === "thinking_delta" &&
+            typeof delta.thinking === "string" &&
+            delta.thinking.length > 0
+          ) {
+            this.streamHadThinking = true;
+            this.provider.post({
+              type: "stream",
+              item: {
+                kind: "thinking",
+                id: id(),
+                messageId: this.streamMsgId ?? undefined,
+                text: delta.thinking,
+                parentToolUseId: parentId,
+              },
+            });
+          }
+        }
+        break;
+      }
       case "system": {
         if ((m as { subtype?: string }).subtype === "init") {
           const sysInit = m as unknown as {
@@ -315,6 +378,9 @@ export class AgentRunner {
           message: { content: unknown[]; id?: string; usage?: unknown };
           parent_tool_use_id: string | null;
         };
+        const msgId = am.message.id ? String(am.message.id) : null;
+        const skipDupText = Boolean(msgId && msgId === this.streamMsgId && this.streamHadText);
+        const skipDupThinking = Boolean(msgId && msgId === this.streamMsgId && this.streamHadThinking);
         const parentId = am.parent_tool_use_id ?? null;
         const usage = (am.message as { usage?: unknown }).usage as
           | {
@@ -331,8 +397,9 @@ export class AgentRunner {
 
         for (const block of am.message.content) {
           const b = block as { type: string } & Record<string, unknown>;
-          if (b.type === "thinking" && typeof b.thinking === "string") {
-            // Start timer on first thinking block; accumulate if multiple.
+          if (b.type !== "thinking" || typeof b.thinking !== "string") {
+            thinkingStartMs = null;
+          } else if (!skipDupThinking) {
             if (thinkingStartMs === null) thinkingStartMs = Date.now();
             const durationMs = Date.now() - thinkingStartMs;
             this.provider.post({
@@ -346,24 +413,22 @@ export class AgentRunner {
                 parentToolUseId: parentId,
               },
             });
-          } else {
-            // Non-thinking block follows — reset the timer so subsequent
-            // text/tool_use blocks get fresh timing if more thinking comes.
-            thinkingStartMs = null;
           }
 
           if (b.type === "text" && typeof b.text === "string" && b.text.length > 0) {
-            this.provider.post({
-              type: "stream",
-              item: {
-                kind: "assistant_text",
-                id: id(),
-                text: b.text,
-                messageId: am.message.id,
-                parentToolUseId: parentId,
-                mode: runMode,
-              },
-            });
+            if (!skipDupText) {
+              this.provider.post({
+                type: "stream",
+                item: {
+                  kind: "assistant_text",
+                  id: id(),
+                  text: b.text,
+                  messageId: am.message.id,
+                  parentToolUseId: parentId,
+                  mode: runMode,
+                },
+              });
+            }
           } else if (b.type === "tool_use") {
             const item: StreamItem = {
               kind: "tool_use",
@@ -376,6 +441,9 @@ export class AgentRunner {
             this.provider.post({ type: "stream", item });
           }
         }
+        this.streamMsgId = null;
+        this.streamHadText = false;
+        this.streamHadThinking = false;
         break;
       }
       case "user": {

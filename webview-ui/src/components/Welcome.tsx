@@ -5,7 +5,7 @@ export function Welcome({ hasApiKey }: { hasApiKey: boolean }) {
   return (
     <div className="welcome">
       <h2>
-        <span className="mark">✦</span> Welcome to Claude Coder
+        <span className="mark">✦</span> Welcome to Craig Code
       </h2>
       <p className="desc">
         An agentic coding assistant powered by the Claude Agent SDK.

@@ -35,7 +35,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand("claude-coder.newSession", async () => {
       await provider.newSession();
-      void vscode.window.showInformationMessage("Claude Coder: started a new session.");
+      void vscode.window.showInformationMessage("Craig Code: started a new session.");
     }),
     vscode.commands.registerCommand("claude-coder.setApiKey", async () => {
       await secrets.promptAndStore();
@@ -44,7 +44,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand("claude-coder.clearApiKey", async () => {
       await secrets.clear();
-      void vscode.window.showInformationMessage("Claude Coder: API key cleared.");
+      void vscode.window.showInformationMessage("Craig Code: API key cleared.");
     }),
     vscode.commands.registerCommand("claude-coder.stop", async () => {
       await provider.stop();

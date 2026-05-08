@@ -1,4 +1,4 @@
-# Claude Coder
+# Craig Code
 
 A VS Code extension that brings agentic coding to the editor, powered by the
 official [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview).
@@ -9,7 +9,7 @@ auto-loaded project memory (`CLAUDE.md` / `AGENTS.md` / `.cursorrules`),
 (takes over the sidebar with a Build dialog), and **per-run permission control**
 (orthogonal to mode).
 
-![Claude Coder screenshot](./media/screenshot.png)
+![Craig Code screenshot](./media/screenshot.png)
 
 ## What it does
 
@@ -105,9 +105,9 @@ The packaged `.vsix` lives at the project root (`claude-coder-0.0.3.vsix`).
 
 ## First run
 
-1. Click the Claude Coder icon in the activity bar.
+1. Click the Craig Code icon in the activity bar.
 2. The empty-state shows **Set Anthropic API Key…** — click it (or run
-   `Claude Coder: Set Anthropic API Key…` from the command palette).
+   `Craig Code: Set Anthropic API Key…` from the command palette).
 3. Paste your `sk-ant-…` key. It is stored in VS Code's `SecretStorage`.
 4. (Optional) drop a `CLAUDE.md` in your repo root to ground the agent.
 5. Type a prompt and press <kbd>Enter</kbd>. Try:
@@ -209,12 +209,12 @@ Cost: ~$0.02–0.20 per run.
 
 ## Commands
 
-- `Claude Coder: Focus Chat` — <kbd>⌘L</kbd> / <kbd>Ctrl+L</kbd>
-- `Claude Coder: New Session` — clears the saved `session_id`
-- `Claude Coder: Set Anthropic API Key…` — store key in `SecretStorage`
-- `Claude Coder: Clear Anthropic API Key`
-- `Claude Coder: Stop` — abort the in-flight agent run
-- `Claude Coder: Open Current Plan in Editor` — mirror the plan to a
+- `Craig Code: Focus Chat` — <kbd>⌘L</kbd> / <kbd>Ctrl+L</kbd>
+- `Craig Code: New Session` — clears the saved `session_id`
+- `Craig Code: Set Anthropic API Key…` — store key in `SecretStorage`
+- `Craig Code: Clear Anthropic API Key`
+- `Craig Code: Stop` — abort the in-flight agent run
+- `Craig Code: Open Current Plan in Editor` — mirror the plan to a
   read-only `claude-coder-plan:` virtual document
 
 ## Architecture

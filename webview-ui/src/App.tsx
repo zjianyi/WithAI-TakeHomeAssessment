@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { on, send } from "./lib/vscodeApi";
 import type {
   ApprovalRequestPayload,
-  ContextUsage,
   EffortLevel,
   Mode,
   PanelKind,
@@ -66,8 +65,6 @@ export function App() {
   });
   const [items, setItems] = useState<AnyItem[]>([]);
   const [running, setRunning] = useState(false);
-  const [lastResult, setLastResult] = useState<{ cost?: number; ms?: number } | null>(null);
-  const [usage, setUsage] = useState<ContextUsage | null>(null);
   const [planContent, setPlanContent] = useState<string>("");
   const [planView, setPlanView] = useState<PlanView>("hidden");
   const [permPanelOpen, setPermPanelOpen] = useState(false);
@@ -87,6 +84,10 @@ export function App() {
   }, []);
 
   function pushItem(item: AnyItem) {
+    if (item.kind === "stream" && (item.item.kind === "assistant_text" || item.item.kind === "thinking")) {
+      setItems((prev) => [...prev, item]);
+      return;
+    }
     pendingItems.current.push(item);
     if (rafId.current === null) {
       rafId.current = requestAnimationFrame(flush);
@@ -123,7 +124,6 @@ export function App() {
         });
       } else if (m.type === "stream") {
         if (m.item.kind === "result") {
-          setLastResult({ cost: m.item.totalCostUsd, ms: m.item.durationMs });
           setPlanView((prev) => (prev === "live" ? "review" : prev));
         }
         if (m.item.kind === "assistant_text" && m.item.mode === "plan") {
@@ -154,8 +154,6 @@ export function App() {
           pendingItems.current = [];
         }
         setItems([]);
-        setLastResult(null);
-        setUsage(null);
         setPlanContent("");
         setPlanView("hidden");
       } else if (m.type === "info") {
@@ -163,8 +161,6 @@ export function App() {
           kind: "stream",
           item: { kind: "system", id: `i_${Date.now()}`, text: m.text },
         });
-      } else if (m.type === "contextUsage") {
-        setUsage(m.usage);
       } else if (m.type === "modeChanged") {
         setInit((s) => ({ ...s, mode: m.mode }));
         if (m.mode !== "plan") {
@@ -235,7 +231,7 @@ export function App() {
       <div className="miniheader">
         <span className="brand">
           <span className="mark">●</span>
-          Claude Coder
+          Craig Code
         </span>
         {sessionShort && <span className="session">session {sessionShort}</span>}
         <span className="spacer" />
@@ -321,7 +317,6 @@ export function App() {
         onStop={() => send({ type: "stop" })}
         onRunSlash={runSlash}
         permissionBaseline={baseline}
-        usage={usage}
         slashCommands={init.slashCommands}
         effort={init.effort}
         onEffortChange={(e) => {
@@ -343,7 +338,13 @@ export function App() {
 
 export type CollapsedEntry =
   | { kind: "user"; id: string; text: string; mode?: Mode }
-  | { kind: "assistant"; id: string; text: string; parentToolUseId?: string | null }
+  | {
+      kind: "assistant";
+      id: string;
+      text: string;
+      parentToolUseId?: string | null;
+      messageId?: string;
+    }
   | {
       kind: "tool";
       id: string;
@@ -366,7 +367,7 @@ export type CollapsedEntry =
       }[];
       parentToolUseId?: string | null;
     }
-  | { kind: "thinking"; id: string; text: string; durationMs?: number }
+  | { kind: "thinking"; id: string; text: string; durationMs?: number; messageId?: string; parentToolUseId?: string | null }
   | { kind: "system"; id: string; text: string }
   | { kind: "error"; id: string; text: string }
   | {
@@ -409,7 +410,8 @@ function collapse(items: AnyItem[]): CollapsedEntry[] {
       if (
         last &&
         last.kind === "assistant" &&
-        (last.parentToolUseId ?? null) === (m.parentToolUseId ?? null)
+        (last.parentToolUseId ?? null) === (m.parentToolUseId ?? null) &&
+        String(last.messageId ?? "") === String(m.messageId ?? "")
       ) {
         last.text += m.text;
       } else {
@@ -418,11 +420,31 @@ function collapse(items: AnyItem[]): CollapsedEntry[] {
           id: m.id,
           text: m.text,
           parentToolUseId: m.parentToolUseId ?? null,
+          messageId: m.messageId,
         });
       }
     } else if (m.kind === "thinking") {
       closeGroup();
-      out.push({ kind: "thinking", id: m.id, text: m.text, durationMs: m.durationMs });
+      const last = out[out.length - 1];
+      const mid = m.messageId ?? "";
+      const pid = m.parentToolUseId ?? null;
+      if (
+        last &&
+        last.kind === "thinking" &&
+        (last.messageId ?? "") === mid &&
+        (last.parentToolUseId ?? null) === pid
+      ) {
+        last.text += m.text;
+      } else {
+        out.push({
+          kind: "thinking",
+          id: m.id,
+          text: m.text,
+          durationMs: m.durationMs,
+          messageId: m.messageId,
+          parentToolUseId: pid,
+        });
+      }
     } else if (m.kind === "tool_use") {
       const isReadOnly = READ_ONLY_TOOL_NAMES.has(m.name);
       const parentId = m.parentToolUseId ?? null;

@@ -1,13 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { send, on } from "../lib/vscodeApi";
-import type {
-  ContextUsage,
-  EffortLevel,
-  Mode,
-  PermissionOverride,
-  SlashCommandMeta,
-  WorkspaceFile,
-} from "../../../src/util/messages";
+import type { EffortLevel, Mode, PermissionOverride, SlashCommandMeta, WorkspaceFile } from "../../../src/util/messages";
 import { MentionPopup } from "./MentionPopup";
 import { ModePicker, MODE_LABEL } from "./ModePicker";
 
@@ -29,8 +22,6 @@ type Props = {
   onModelChange: (m: string) => void;
   /** The workspace baseline (informs PermissionOverride default in menu). */
   permissionBaseline: PermissionOverride;
-  /** Live context usage for the context meter inside the + menu. */
-  usage?: ContextUsage | null;
   /** Slash-command metadata, synced from the extension at init time. */
   slashCommands: SlashCommandMeta[];
   /** Reasoning effort and thinking — Cursor's Model section in the + menu. */
@@ -57,7 +48,6 @@ export function Composer({
   model,
   onModelChange,
   permissionBaseline,
-  usage,
   slashCommands,
   effort,
   onEffortChange,
@@ -262,25 +252,6 @@ export function Composer({
   const currentModel = MODELS.find((m) => m.id === model)?.label ?? model;
   const showModePill = mode !== "agent";
 
-  /** Insert "@" at the caret to trigger the file mention popup. */
-  function startMention() {
-    const ta = taRef.current;
-    if (!ta) return;
-    const caret = ta.selectionStart;
-    const before = text.slice(0, caret);
-    const after = text.slice(caret);
-    // Preceding char must be non-word for the @-trigger regex to fire.
-    const pad = before.length > 0 && /\w/.test(before[before.length - 1]!) ? " " : "";
-    const next = `${before}${pad}@${after}`;
-    setText(next);
-    requestAnimationFrame(() => {
-      const pos = (before + pad + "@").length;
-      ta.focus();
-      ta.setSelectionRange(pos, pos);
-      handleChange(next, pos);
-    });
-  }
-
   return (
     <div className="composer">
       {trigger.kind === "file" && (
@@ -314,7 +285,7 @@ export function Composer({
               <button
                 className="plus"
                 onClick={() => setPickerOpen((v) => !v)}
-                title="Modes, permissions, model & context"
+                title="Modes, permissions, model"
                 aria-label="Open modes and tools"
               >
                 +
@@ -326,18 +297,10 @@ export function Composer({
                 onClose={() => setPickerOpen(false)}
                 permLevel={permLevel}
                 onPermChange={setPermLevel}
-                usage={usage}
                 effort={effort}
                 onEffortChange={onEffortChange}
                 thinkingEnabled={thinkingEnabled}
                 onThinkingChange={onThinkingChange}
-                onAttachFile={() => {
-                  startMention();
-                }}
-                onMentionFile={() => {
-                  startMention();
-                }}
-                onClear={() => onRunSlash("clear", "")}
                 onSwitchModel={() => setModelOpen(true)}
                 onAccountUsage={() => onAccountUsage()}
               />
