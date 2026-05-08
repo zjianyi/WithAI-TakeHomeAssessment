@@ -1,8 +1,8 @@
 {
   "name": "claude-coder",
   "displayName": "Claude Coder",
-  "description": "Agentic coding in VS Code with Cursor-style mode switching, parallel subagents, and context tracking — powered by the Claude Agent SDK.",
-  "version": "0.0.2",
+  "description": "Agentic coding in VS Code with Cursor-style mode switching, parallel subagents, workspace indexer, plan view, and per-run permission control — powered by the Claude Agent SDK.",
+  "version": "0.0.3",
   "publisher": "withai",
   "repository": {
     "type": "git",
@@ -62,6 +62,11 @@
       {
         "command": "claude-coder.stop",
         "title": "Claude Coder: Stop",
+        "category": "Claude Coder"
+      },
+      {
+        "command": "claude-coder.openPlanInEditor",
+        "title": "Claude Coder: Open Current Plan in Editor",
         "category": "Claude Coder"
       }
     ],

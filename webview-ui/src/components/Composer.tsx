@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import { send, on } from "../lib/vscodeApi";
-import type { Mode, WorkspaceFile } from "../../../src/util/messages";
+import type { Mode, PermissionOverride, WorkspaceFile } from "../../../src/util/messages";
 import { MentionPopup } from "./MentionPopup";
 import { ModePicker, MODE_LABEL } from "./ModePicker";
+import { PermPill } from "./PermPill";
 
 type SlashCmd = { name: string; desc: string };
 const SLASH_COMMANDS: SlashCmd[] = [
@@ -12,6 +13,7 @@ const SLASH_COMMANDS: SlashCmd[] = [
   { name: "resume", desc: "Resume the last saved session" },
   { name: "cost", desc: "Show last run cost & duration" },
   { name: "model", desc: "Print the current model" },
+  { name: "plan", desc: "Re-open the plan view (if any)" },
 ];
 
 const MODELS = [
@@ -21,7 +23,7 @@ const MODELS = [
 ];
 
 type Props = {
-  onSend: (text: string, mode?: Mode) => void;
+  onSend: (text: string, mode?: Mode, permission?: PermissionOverride) => void;
   onSlash: (cmd: string) => boolean;
   running: boolean;
   onStop: () => void;
@@ -29,6 +31,8 @@ type Props = {
   onModeChange: (m: Mode) => void;
   model: string;
   onModelChange: (m: string) => void;
+  /** The workspace baseline (informs the pill's "overridden" highlight). */
+  permissionBaseline: PermissionOverride;
 };
 
 type Trigger =
@@ -45,6 +49,7 @@ export function Composer({
   onModeChange,
   model,
   onModelChange,
+  permissionBaseline,
 }: Props) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
@@ -52,8 +57,13 @@ export function Composer({
   const [active, setActive] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
+  const [permLevel, setPermLevel] = useState<PermissionOverride>(permissionBaseline);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const modelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setPermLevel(permissionBaseline);
+  }, [permissionBaseline]);
 
   useEffect(() => {
     return on((m) => {
@@ -163,7 +173,7 @@ export function Composer({
         return;
       }
     }
-    onSend(t, mode);
+    onSend(t, mode, permLevel);
     setText("");
   }
 
@@ -281,6 +291,12 @@ export function Composer({
                 </button>
               </span>
             )}
+
+            <PermPill
+              level={permLevel}
+              baseline={permissionBaseline}
+              onChange={setPermLevel}
+            />
 
             <div className="model-wrap" ref={modelRef}>
               <button

@@ -4,6 +4,8 @@ import type {
   ApprovalRequestPayload,
   ContextUsage,
   Mode,
+  PermissionBaseline,
+  PermissionOverride,
   StreamItem,
 } from "../../src/util/messages";
 import { Welcome } from "./components/Welcome";
@@ -13,6 +15,8 @@ import { Markdown } from "./components/Markdown";
 import { Composer } from "./components/Composer";
 import { ContextBar } from "./components/ContextBar";
 import { SubagentWorkstream } from "./components/SubagentWorkstream";
+import { PlanPanel } from "./components/PlanPanel";
+import { PermissionsPanel } from "./components/PermissionsPanel";
 
 type InitState = {
   hasApiKey: boolean;
@@ -21,11 +25,25 @@ type InitState = {
   cwd: string | null;
   sessionId: string | null;
   mode: Mode;
+  allowedTools: string[];
 };
 
 type AnyItem =
   | { kind: "stream"; item: StreamItem }
   | { kind: "approval"; payload: ApprovalRequestPayload };
+
+type PlanView = "hidden" | "live" | "review";
+
+/**
+ * Heuristic: an assistant turn is a "clarifying questions" turn if it starts
+ * with `1.` and contains a `2.` early on. The PLAN_PROMPT explicitly asks for
+ * exactly 2 numbered questions in the first turn before any plan is written,
+ * so this is the simplest reliable signal we can use to keep questions in the
+ * transcript while everything else lands in the PlanPanel.
+ */
+function looksLikeQuestions(text: string): boolean {
+  return /^\s*1\./.test(text) && /\n\s*2\./.test(text.slice(0, 800));
+}
 
 export function App() {
   const [init, setInit] = useState<InitState>({
@@ -35,14 +53,27 @@ export function App() {
     cwd: null,
     sessionId: null,
     mode: "agent",
+    allowedTools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
   });
   const [items, setItems] = useState<AnyItem[]>([]);
   const [running, setRunning] = useState(false);
   const [lastResult, setLastResult] = useState<{ cost?: number; ms?: number } | null>(null);
   const [usage, setUsage] = useState<ContextUsage | null>(null);
+  const [planContent, setPlanContent] = useState<string>("");
+  const [planView, setPlanView] = useState<PlanView>("hidden");
+  const [permPanelOpen, setPermPanelOpen] = useState(false);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
 
   const collapsed = useMemo(() => collapse(items), [items]);
+
+  // Derive the per-run permission baseline from the workspace setting.
+  const baseline: PermissionOverride =
+    init.permissionMode === "acceptEdits" ? "acceptEdits" : "default";
+
+  const permBaseline: PermissionBaseline = {
+    permissionMode: init.permissionMode === "acceptEdits" ? "acceptEdits" : "default",
+    allowedTools: init.allowedTools,
+  };
 
   useEffect(() => {
     const off = on((m) => {
@@ -54,10 +85,31 @@ export function App() {
           cwd: m.cwd,
           sessionId: m.sessionId,
           mode: m.mode,
+          allowedTools: m.allowedTools,
         });
       } else if (m.type === "stream") {
         if (m.item.kind === "result") {
           setLastResult({ cost: m.item.totalCostUsd, ms: m.item.durationMs });
+          // Plan-mode turn just finished. If we accumulated plan text (i.e. the
+          // text was NOT a clarifying-questions turn), flip the panel to review
+          // so the BuildDialog appears.
+          setPlanView((prev) => (prev === "live" ? "review" : prev));
+        }
+        if (m.item.kind === "assistant_text" && m.item.mode === "plan") {
+          // Only treat *non-question* turns as plan content. Questions stay in
+          // the transcript so the user can read + answer them inline.
+          const text = m.item.text;
+          if (!looksLikeQuestions(text)) {
+            setPlanContent((prev) => prev + text);
+            setPlanView((prev) => (prev === "hidden" ? "live" : prev));
+          }
+        }
+        if (m.item.kind === "user" && m.item.mode === "plan") {
+          // A new plan-mode user message starts a fresh plan stream. Reset
+          // accumulator + view (questions land in transcript first; plan text
+          // will start populating once the assistant moves past Q&A).
+          setPlanContent("");
+          setPlanView("hidden");
         }
         setItems((prev) => [...prev, { kind: "stream", item: m.item }]);
       } else if (m.type === "running") {
@@ -72,6 +124,8 @@ export function App() {
         setItems([]);
         setLastResult(null);
         setUsage(null);
+        setPlanContent("");
+        setPlanView("hidden");
       } else if (m.type === "info") {
         setItems((prev) => [
           ...prev,
@@ -81,6 +135,12 @@ export function App() {
         setUsage(m.usage);
       } else if (m.type === "modeChanged") {
         setInit((s) => ({ ...s, mode: m.mode }));
+      } else if (m.type === "permissionBaseline") {
+        setInit((s) => ({
+          ...s,
+          permissionMode: m.baseline.permissionMode,
+          allowedTools: m.baseline.allowedTools,
+        }));
       }
     });
     send({ type: "webviewReady" });
@@ -96,6 +156,8 @@ export function App() {
     switch (cmd) {
       case "clear":
         setItems([]);
+        setPlanContent("");
+        setPlanView("hidden");
         return true;
       case "new":
         send({ type: "newSession" });
@@ -139,6 +201,9 @@ export function App() {
           },
         ]);
         return true;
+      case "plan":
+        if (planContent) setPlanView("review");
+        return true;
       case "help":
         setItems((prev) => [
           ...prev,
@@ -148,9 +213,10 @@ export function App() {
               kind: "system",
               id: `i_${Date.now()}`,
               text:
-                "Commands: /help /clear /new /resume /cost /model. " +
+                "Commands: /help /clear /new /resume /cost /model /plan. " +
                 "Type @ to mention a workspace file. Press Esc to stop a running agent. " +
-                "Modes: click + to switch (Plan / Debug / Multitask / Ask / Agent).",
+                "Modes: click + to switch (Plan / Debug / Multitask / Ask / Agent). " +
+                "Lock icon (top-right) opens the permissions panel.",
             },
           },
         ]);
@@ -162,6 +228,22 @@ export function App() {
 
   const sessionShort = init.sessionId ? init.sessionId.slice(0, 8) : null;
 
+  function handleSend(text: string, mode?: Mode, permission?: PermissionOverride) {
+    send({ type: "send", text, mode, permissionModeOverride: permission });
+  }
+
+  function handleAcceptPlan(perm: "acceptEdits" | "default", followUp?: string) {
+    send({ type: "acceptPlan", permissionModeOverride: perm, followUp });
+    setPlanView("hidden");
+  }
+
+  function handleRefine(followUp?: string) {
+    const text = followUp && followUp.trim().length > 0
+      ? followUp
+      : "Refine the plan based on the comments above.";
+    send({ type: "send", text, mode: "plan" });
+  }
+
   return (
     <div className="app">
       <div className="miniheader">
@@ -171,6 +253,14 @@ export function App() {
         </span>
         {sessionShort && <span className="session">session {sessionShort}</span>}
         <span className="spacer" />
+        <button
+          className={`iconbtn lockbtn${permPanelOpen ? " active" : ""}`}
+          title="Permissions"
+          aria-label="Open permissions panel"
+          onClick={() => setPermPanelOpen((v) => !v)}
+        >
+          🔒
+        </button>
         <button
           className="iconbtn"
           title="New session"
@@ -189,10 +279,38 @@ export function App() {
         )}
       </div>
 
-      <div className="transcript" ref={transcriptRef}>
-        {items.length === 0 && <Welcome hasApiKey={init.hasApiKey} />}
-        {renderEntries(collapsed)}
-      </div>
+      {planView !== "hidden" ? (
+        <PlanPanel
+          state={planView === "live" ? "live" : "review"}
+          content={planContent}
+          onBack={() => setPlanView("hidden")}
+          onOpenInEditor={() => send({ type: "openPlanInEditor", content: planContent })}
+          onBuild={(f) => handleAcceptPlan("acceptEdits", f)}
+          onBuildSafe={(f) => handleAcceptPlan("default", f)}
+          onRefine={handleRefine}
+        />
+      ) : (
+        <div className="transcript" ref={transcriptRef}>
+          {items.length === 0 && <Welcome hasApiKey={init.hasApiKey} />}
+          {renderEntries(collapsed)}
+          {planContent && (
+            <button
+              className="plan-resume"
+              onClick={() => setPlanView("review")}
+              title="Re-open the plan view"
+            >
+              ↗ Open plan view ({planContent.length.toLocaleString()} chars)
+            </button>
+          )}
+        </div>
+      )}
+
+      <PermissionsPanel
+        open={permPanelOpen}
+        baseline={permBaseline}
+        onClose={() => setPermPanelOpen(false)}
+        onSave={(b) => send({ type: "setPermissionBaseline", baseline: b })}
+      />
 
       <ContextBar usage={usage} />
 
@@ -208,9 +326,10 @@ export function App() {
           setInit((s) => ({ ...s, model: m }));
           send({ type: "setModel", model: m });
         }}
-        onSend={(t, mode) => send({ type: "send", text: t, mode })}
+        onSend={handleSend}
         onStop={() => send({ type: "stop" })}
         onSlash={handleSlash}
+        permissionBaseline={baseline}
       />
     </div>
   );
@@ -253,9 +372,6 @@ function collapse(items: AnyItem[]): CollapsedEntry[] {
     if (m.kind === "user") out.push({ kind: "user", id: m.id, text: m.text, mode: m.mode });
     else if (m.kind === "assistant_text") {
       const last = out[out.length - 1];
-      // Only fold streaming text into the previous assistant block if their
-      // parent_tool_use_id matches — otherwise nested subagent output would
-      // collapse into the parent's bubble.
       if (
         last &&
         last.kind === "assistant" &&
@@ -309,13 +425,7 @@ function collapse(items: AnyItem[]): CollapsedEntry[] {
   return out;
 }
 
-/**
- * Group entries: top-level entries render normally; entries with a
- * parentToolUseId render under the matching Agent tool block as a nested
- * subagent workstream (see SubagentWorkstream).
- */
 function renderEntries(entries: CollapsedEntry[]): React.ReactNode[] {
-  // Bucket child entries by parentToolUseId.
   const childrenByParent = new Map<string, CollapsedEntry[]>();
   for (const e of entries) {
     let parent: string | null = null;
@@ -329,7 +439,6 @@ function renderEntries(entries: CollapsedEntry[]): React.ReactNode[] {
 
   const nodes: React.ReactNode[] = [];
   for (const e of entries) {
-    // Skip child nodes — they render inside their parent's workstream.
     if (
       (e.kind === "assistant" && (e.parentToolUseId ?? null)) ||
       (e.kind === "tool" && (e.parentToolUseId ?? null))

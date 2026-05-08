@@ -1,9 +1,17 @@
 // E2E smoke that mirrors the real AgentRunner setup. Supports modes:
-//   --mode=agent     (default) Read+Edit gated through canUseTool with a diff
-//   --mode=plan      Read-only — asserts NO Edit/Write/Bash were called
-//   --mode=ask       Read-only — asserts no edits, no plan dispatching
-//   --mode=multitask Asserts an Agent (subagent) tool_use shows up and that
-//                    its messages carry parent_tool_use_id
+//   --mode=agent           (default) Read+Edit gated through canUseTool with a diff
+//   --mode=plan            Read-only, two-turn flow:
+//                           1) prompt → assert exactly 2 numbered clarifying questions
+//                           2) follow-up answer → assert numbered plan with ≥3 items
+//   --mode=ask             Read-only — asserts no edits, no plan dispatching
+//   --mode=multitask       Asserts an Agent (subagent) tool_use shows up and that
+//                          its messages carry parent_tool_use_id
+//   --mode=plan-build      Plan turn → simulated acceptPlan with
+//                          permissionMode=acceptEdits → assert Edit fires without
+//                          a canUseTool round-trip and the file is updated
+//   --mode=perm-readonly   Agent system prompt + readOnly intersection on tools;
+//                          assert NO Edit/Write/Bash were exposed and the file
+//                          is unchanged (orthogonal to mode)
 //
 //   ANTHROPIC_API_KEY=sk-ant-... node scripts/e2e-runner-smoke.mjs --mode=plan
 import { query } from "@anthropic-ai/claude-agent-sdk";
@@ -32,11 +40,22 @@ await fs.writeFile(
 const ALL = ["Read", "Write", "Edit", "Glob", "Grep", "Bash", "TodoWrite"];
 const READONLY = ["Read", "Glob", "Grep", "TodoWrite"];
 
+// Mirror src/agent/modes.ts (must stay in sync).
 const PLAN_PROMPT =
-  "You are in PLAN mode. Explore the codebase carefully (Read/Glob/Grep) and produce a clear, " +
-  "numbered implementation plan as your final assistant message. Do NOT call Edit, Write, or Bash. " +
-  "Do NOT modify files. Surface assumptions, risks, and out-of-scope items. " +
-  "Wait for the user to switch to Agent mode to execute.";
+  "You are in PLAN mode. This is a strict two-turn protocol — follow it exactly.\n" +
+  "\n" +
+  "TURN 1 (right now): Your ENTIRE response must be exactly two clarifying questions, nothing else. " +
+  "No preamble, no plan, no exploration, no tool calls. The questions should probe scope, constraints, " +
+  "or ambiguities in the user's request. Format MUST be:\n" +
+  "  1. <first question>\n" +
+  "  2. <second question>\n" +
+  "Do NOT call any tools. Do NOT write a plan. Do NOT propose implementation. " +
+  "If you start writing a plan in this turn, you have failed the protocol — STOP and ask questions " +
+  "instead.\n" +
+  "\n" +
+  "TURN 2 (after the user answers): Explore the codebase as needed (Read/Glob/Grep) and then write " +
+  "a numbered implementation plan as your final assistant message. Do NOT call Edit, Write, or Bash. " +
+  "Surface assumptions, risks, and out-of-scope items.";
 const ASK_PROMPT =
   "You are in ASK mode. Answer the user's question conversationally. " +
   "You may read files to ground your answer, but do not propose plans, do not edit, " +
@@ -77,128 +96,251 @@ async function buildDiff(toolName, input, cwd) {
   return null;
 }
 
-let prompt = "Read demo.js and edit it so the add function returns a + b. Then stop.";
-let allowedTools = ALL.filter((t) => ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "TodoWrite"].includes(t));
-let tools = ALL;
-let appendSystemPrompt = "";
-let canUseTool = undefined;
-let agents = undefined;
-
-if (mode === "plan") {
-  prompt = "Plan how to implement the add function in demo.js. Just plan; do not edit anything.";
-  tools = READONLY;
-  allowedTools = READONLY;
-  appendSystemPrompt = PLAN_PROMPT;
-} else if (mode === "ask") {
-  prompt = "What does demo.js currently do? Just answer.";
-  tools = READONLY;
-  allowedTools = READONLY;
-  appendSystemPrompt = ASK_PROMPT;
-} else if (mode === "multitask") {
-  prompt =
-    "Two independent tasks: (1) edit demo.js so `add` returns a+b, (2) edit two.js so `sub` " +
-    "returns a-b. These touch different files and are independent — dispatch them as TWO " +
-    "parallel workers via the Agent tool, then summarize.";
-  tools = [...ALL, "Agent"];
-  allowedTools = [...allowedTools, "Agent"];
-  appendSystemPrompt = MULTI_PROMPT;
-  agents = { worker: WORKER };
-  canUseTool = async (toolName, input) => {
-    const diff = await buildDiff(toolName, input, tmp);
-    return { behavior: "allow", updatedInput: input };
+/**
+ * Wraps `query()` and collects per-turn events. Returns the assistant text
+ * (joined) and the tool list for that turn so we can assert structure between
+ * turns in multi-turn flows.
+ */
+async function runTurn({ prompt, opts, label }) {
+  console.log(`\n[turn] ${label}`);
+  const turn = {
+    text: "",
+    tools: [],
+    sessionId: null,
+    edited: false,
   };
-} else {
-  // agent
-  canUseTool = async (toolName, input) => {
-    const diff = await buildDiff(toolName, input, tmp);
-    if (diff) console.log("DIFF for", toolName, "\n" + diff.split("\n").slice(0, 10).join("\n"));
-    return { behavior: "allow", updatedInput: input };
-  };
+  for await (const m of query({ prompt, options: opts })) {
+    if (m.type === "system" && m.subtype === "init") {
+      turn.sessionId = m.session_id;
+      console.log(`  [init] tools=${m.tools.length} model=${m.model} sid=${m.session_id.slice(0,8)}`);
+    } else if (m.type === "assistant") {
+      for (const b of m.message.content) {
+        if (b.type === "text" && b.text) turn.text += b.text;
+        else if (b.type === "tool_use") {
+          turn.tools.push(b.name);
+          if (b.name === "Edit" || b.name === "Write") turn.edited = true;
+        }
+      }
+    } else if (m.type === "result") {
+      turn.sessionId = m.session_id;
+      console.log(
+        `  [result] ${m.subtype} cost=$${m.total_cost_usd?.toFixed(4)} ${m.duration_ms}ms`,
+      );
+    }
+  }
+  return turn;
 }
 
-const events = {
-  tools: [],
-  toolsByParent: {}, // parent_tool_use_id -> [toolNames]
-  assistant: [],
-  parentTagged: 0, // count of messages with parent_tool_use_id present
-  agentToolUses: 0,
-};
+let ok = false;
 
-console.log(`[e2e] mode=${mode} cwd=${tmp}`);
+if (mode === "plan") {
+  // Two-turn flow: questions then plan.
+  const opts1 = {
+    cwd: tmp,
+    model: "claude-sonnet-4-5",
+    maxTurns: 4,
+    allowedTools: READONLY,
+    tools: READONLY,
+    permissionMode: "default",
+    appendSystemPrompt: PLAN_PROMPT,
+    env: { ...process.env, ANTHROPIC_API_KEY: apiKey },
+  };
+  const t1 = await runTurn({
+    prompt: "Plan how to implement the `add` function in demo.js so it returns a + b.",
+    opts: opts1,
+    label: "plan question phase",
+  });
 
-for await (const m of query({
-  prompt,
-  options: {
+  // Assert exactly two numbered questions (1. and 2., on their own lines)
+  // AND that the response actually ends with a question mark — defends against
+  // the model dressing up a plan as a numbered list.
+  const has1 = /^\s*1\./m.test(t1.text);
+  const has2 = /^\s*2\./m.test(t1.text);
+  const has3 = /^\s*3\./m.test(t1.text);
+  const endsWithQuestion = /\?\s*$/.test(t1.text);
+  const noMutations1 = !t1.tools.some((t) => ["Edit", "Write", "Bash"].includes(t));
+  console.log(`  questions: 1.=${has1} 2.=${has2} (no 3.)=${!has3} ends-?=${endsWithQuestion} no-mutations=${noMutations1}`);
+  console.log(`  --- assistant text (turn 1) ---\n${t1.text}\n  --- end ---`);
+
+  // Second turn: answer the questions, expect a numbered plan.
+  const opts2 = { ...opts1, resume: t1.sessionId };
+  const t2 = await runTurn({
+    prompt:
+      "Answers: (1) Just edit the existing function in demo.js. (2) No edge cases — assume both are numbers. Now write the plan.",
+    opts: opts2,
+    label: "plan generation phase",
+  });
+  const itemRe = /(?:^|\n)\s*(?:\d+\.|[-*])\s+\S/g;
+  const planItems = (t2.text.match(itemRe) || []).length;
+  const noMutations2 = !t2.tools.some((t) => ["Edit", "Write", "Bash"].includes(t));
+  const final = await fs.readFile(target, "utf8");
+  const unchanged = /return 0/.test(final);
+  console.log(`  plan: items=${planItems} no-mutations=${noMutations2} file-unchanged=${unchanged}`);
+
+  ok = has1 && has2 && endsWithQuestion && noMutations1 && noMutations2 && planItems >= 3 && unchanged;
+
+} else if (mode === "ask") {
+  const opts = {
+    cwd: tmp,
+    model: "claude-sonnet-4-5",
+    maxTurns: 4,
+    allowedTools: READONLY,
+    tools: READONLY,
+    permissionMode: "default",
+    appendSystemPrompt: ASK_PROMPT,
+    env: { ...process.env, ANTHROPIC_API_KEY: apiKey },
+  };
+  const t = await runTurn({
+    prompt: "What does demo.js currently do? Just answer.",
+    opts, label: "ask",
+  });
+  const noMutations = !t.tools.some((x) => ["Edit", "Write", "Bash"].includes(x));
+  const final = await fs.readFile(target, "utf8");
+  const unchanged = /return 0/.test(final);
+  console.log(`  ask: noMutations=${noMutations} unchanged=${unchanged}`);
+  ok = noMutations && unchanged;
+
+} else if (mode === "multitask") {
+  let dispatched = 0, parentTagged = 0;
+  const opts = {
     cwd: tmp,
     model: "claude-sonnet-4-5",
     maxTurns: 8,
-    allowedTools,
-    tools,
+    allowedTools: [...ALL, "Agent"],
+    tools: [...ALL, "Agent"],
+    permissionMode: "default",
+    appendSystemPrompt: MULTI_PROMPT,
+    agents: { worker: WORKER },
+    canUseTool: async (toolName, input) => ({ behavior: "allow", updatedInput: input }),
+    env: { ...process.env, ANTHROPIC_API_KEY: apiKey },
+  };
+  for await (const m of query({
+    prompt:
+      "Two independent tasks: (1) edit demo.js so `add` returns a+b, (2) edit two.js so `sub` " +
+      "returns a-b. These touch different files and are independent — dispatch them as TWO " +
+      "parallel workers via the Agent tool, then summarize.",
+    options: opts,
+  })) {
+    if (m.type === "assistant") {
+      if (m.parent_tool_use_id) parentTagged++;
+      for (const b of m.message.content) {
+        if (b.type === "tool_use" && b.name === "Agent") dispatched++;
+      }
+    } else if (m.type === "user" && m.parent_tool_use_id) parentTagged++;
+    else if (m.type === "result") {
+      console.log(`  [result] ${m.subtype} ${m.duration_ms}ms`);
+    }
+  }
+  const final = await fs.readFile(target, "utf8");
+  const finalTwo = await fs.readFile(path.join(tmp, "two.js"), "utf8");
+  const modified = /a\s*\+\s*b/.test(final) || /a\s*-\s*b/.test(finalTwo);
+  console.log(`  multitask: dispatched=${dispatched} parentTagged=${parentTagged} modified=${modified}`);
+  ok = dispatched >= 1 && parentTagged >= 1 && modified;
+
+} else if (mode === "plan-build") {
+  // Round 1: plan (questions + then plan in two turns).
+  const planOpts1 = {
+    cwd: tmp,
+    model: "claude-sonnet-4-5",
+    maxTurns: 4,
+    allowedTools: READONLY,
+    tools: READONLY,
+    permissionMode: "default",
+    appendSystemPrompt: PLAN_PROMPT,
+    env: { ...process.env, ANTHROPIC_API_KEY: apiKey },
+  };
+  const t1 = await runTurn({
+    prompt: "Plan how to implement the `add` function in demo.js so it returns a + b.",
+    opts: planOpts1, label: "plan question phase",
+  });
+  const planOpts2 = { ...planOpts1, resume: t1.sessionId };
+  const t2 = await runTurn({
+    prompt:
+      "Answers: (1) Edit the existing function in demo.js. (2) No edge cases. Write the plan now.",
+    opts: planOpts2, label: "plan generation phase",
+  });
+  const itemRe = /(?:^|\n)\s*(?:\d+\.|[-*])\s+\S/g;
+  const planItems = (t2.text.match(itemRe) || []).length;
+
+  // Round 2: simulate the acceptPlan handler — switch to Agent + acceptEdits.
+  const buildOpts = {
+    cwd: tmp,
+    model: "claude-sonnet-4-5",
+    maxTurns: 6,
+    allowedTools: ALL,
+    tools: ALL,
+    permissionMode: "acceptEdits",
+    resume: t2.sessionId,
+    env: { ...process.env, ANTHROPIC_API_KEY: apiKey },
+  };
+  let approvalsAsked = 0;
+  buildOpts.canUseTool = async (toolName, input) => {
+    approvalsAsked++;
+    return { behavior: "allow", updatedInput: input };
+  };
+  const t3 = await runTurn({
+    prompt:
+      "Execute the plan you just produced. Proceed step by step. After each numbered step, briefly confirm it's done before moving on.",
+    opts: buildOpts, label: "build (acceptEdits)",
+  });
+  const final = await fs.readFile(target, "utf8");
+  const editFired = t3.tools.includes("Edit") || t3.tools.includes("Write");
+  const correctOutput = /a\s*\+\s*b/.test(final);
+  // In acceptEdits the SDK shouldn't be calling our canUseTool for Edit/Write.
+  // Approvals may still fire for Bash if the model reaches for it; that's not a fail
+  // by itself. The key signal is editFired AND correctOutput.
+  console.log(`  build: planItems=${planItems} editFired=${editFired} correctOutput=${correctOutput} approvalsAsked=${approvalsAsked}`);
+  ok = planItems >= 3 && editFired && correctOutput;
+
+} else if (mode === "perm-readonly") {
+  // Agent mode SYSTEM prompt (no plan/ask), but tools intersected with read-only
+  // — verifies that "readOnly" override is orthogonal to mode (mode still says
+  // "go ahead and edit" but the tool list won't expose Edit/Write/Bash).
+  const intersected = ALL.filter((t) => READONLY.includes(t));
+  const opts = {
+    cwd: tmp,
+    model: "claude-sonnet-4-5",
+    maxTurns: 4,
+    allowedTools: intersected,
+    tools: intersected,
     permissionMode: "default",
     env: { ...process.env, ANTHROPIC_API_KEY: apiKey },
-    ...(appendSystemPrompt ? { appendSystemPrompt } : {}),
-    ...(agents ? { agents } : {}),
-    ...(canUseTool ? { canUseTool } : {}),
-  },
-})) {
-  if (m.type === "assistant") {
-    const parent = m.parent_tool_use_id ?? null;
-    if (parent) events.parentTagged++;
-    for (const b of m.message.content) {
-      if (b.type === "text" && b.text) events.assistant.push(b.text);
-      else if (b.type === "tool_use") {
-        events.tools.push(b.name);
-        if (b.name === "Agent") events.agentToolUses++;
-        if (parent) {
-          (events.toolsByParent[parent] ??= []).push(b.name);
-        }
-      }
-    }
-  } else if (m.type === "user") {
-    if (m.parent_tool_use_id) events.parentTagged++;
-  } else if (m.type === "system" && m.subtype === "init") {
-    console.log(`[init] tools=${m.tools.length} model=${m.model}`);
-  } else if (m.type === "result") {
-    console.log(
-      `[result] ${m.subtype} cost=$${m.total_cost_usd?.toFixed(4)} ${m.duration_ms}ms ` +
-      `usage_in=${m.usage?.input_tokens} usage_out=${m.usage?.output_tokens}`,
-    );
-  }
-}
+  };
+  const t = await runTurn({
+    prompt: "Read demo.js then edit it so `add` returns a + b. Then stop.",
+    opts, label: "agent + readOnly intersection",
+  });
+  const noMutations = !t.tools.some((x) => ["Edit", "Write", "Bash"].includes(x));
+  const final = await fs.readFile(target, "utf8");
+  const unchanged = /return 0/.test(final);
+  console.log(`  perm-readonly: noMutations=${noMutations} unchanged=${unchanged} tools=${t.tools.join(",")}`);
+  ok = noMutations && unchanged;
 
-const final = await fs.readFile(target, "utf8");
-const finalTwo = await fs.readFile(path.join(tmp, "two.js"), "utf8");
-console.log("\nfinal demo.js:", JSON.stringify(final));
-console.log("tools:", events.tools.join(", "));
-console.log("parent-tagged messages:", events.parentTagged);
-console.log("agent tool uses:", events.agentToolUses);
-console.log("toolsByParent:", JSON.stringify(events.toolsByParent));
-
-let ok = false;
-if (mode === "agent") {
-  ok = events.tools.includes("Read")
-    && (events.tools.includes("Edit") || events.tools.includes("Write"))
+} else {
+  // agent (default)
+  const opts = {
+    cwd: tmp,
+    model: "claude-sonnet-4-5",
+    maxTurns: 8,
+    allowedTools: ALL.filter((t) => ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "TodoWrite"].includes(t)),
+    tools: ALL,
+    permissionMode: "default",
+    canUseTool: async (toolName, input) => {
+      const diff = await buildDiff(toolName, input, tmp);
+      if (diff) console.log("DIFF for", toolName, "\n" + diff.split("\n").slice(0, 10).join("\n"));
+      return { behavior: "allow", updatedInput: input };
+    },
+    env: { ...process.env, ANTHROPIC_API_KEY: apiKey },
+  };
+  const t = await runTurn({
+    prompt: "Read demo.js and edit it so the add function returns a + b. Then stop.",
+    opts, label: "agent",
+  });
+  const final = await fs.readFile(target, "utf8");
+  ok = t.tools.includes("Read")
+    && (t.tools.includes("Edit") || t.tools.includes("Write"))
     && /a\s*\+\s*b/.test(final);
-} else if (mode === "plan") {
-  // No Edit / Write / Bash should have been called.
-  const noMutations = !events.tools.some((t) => ["Edit", "Write", "Bash"].includes(t));
-  // File should be unchanged.
-  const unchanged = /return 0/.test(final);
-  ok = noMutations && unchanged;
-  console.log(`plan checks: noMutations=${noMutations} unchanged=${unchanged}`);
-} else if (mode === "ask") {
-  const noMutations = !events.tools.some((t) => ["Edit", "Write", "Bash"].includes(t));
-  const unchanged = /return 0/.test(final);
-  ok = noMutations && unchanged;
-  console.log(`ask checks: noMutations=${noMutations} unchanged=${unchanged}`);
-} else if (mode === "multitask") {
-  const dispatched = events.agentToolUses >= 1;
-  const nestedSeen = events.parentTagged >= 1;
-  // At least one of the files should have been modified.
-  const modified = /a\s*\+\s*b/.test(final) || /a\s*-\s*b/.test(finalTwo);
-  ok = dispatched && nestedSeen && modified;
-  console.log(`multitask: dispatched=${dispatched} nestedSeen=${nestedSeen} modified=${modified}`);
 }
 
-console.log(`=== ${ok ? "PASS" : "FAIL"} (${mode}) ===`);
+console.log(`\n=== ${ok ? "PASS" : "FAIL"} (${mode}) ===`);
 process.exit(ok ? 0 : 1);

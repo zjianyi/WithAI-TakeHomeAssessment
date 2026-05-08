@@ -27,12 +27,19 @@ export const ALL_TOOLS = [
 export const READ_ONLY_TOOLS = ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "TodoWrite"];
 
 const PLAN_PROMPT =
-  "You are in PLAN mode.\n" +
-  "Step 1 — Before writing any plan, ask the user exactly 2 clarifying questions about scope, " +
-  "constraints, or ambiguities. Number them `1.` and `2.` (each on its own line). Do not write " +
-  "the plan yet. Do not call any tools yet.\n" +
-  "Step 2 — After the user answers, explore the codebase (Read/Glob/Grep), then write a numbered " +
-  "implementation plan as your final assistant message. Do NOT call Edit, Write, or Bash. " +
+  "You are in PLAN mode. This is a strict two-turn protocol — follow it exactly.\n" +
+  "\n" +
+  "TURN 1 (right now): Your ENTIRE response must be exactly two clarifying questions, nothing else. " +
+  "No preamble, no plan, no exploration, no tool calls. The questions should probe scope, constraints, " +
+  "or ambiguities in the user's request. Format MUST be:\n" +
+  "  1. <first question>\n" +
+  "  2. <second question>\n" +
+  "Do NOT call any tools. Do NOT write a plan. Do NOT propose implementation. " +
+  "If you start writing a plan in this turn, you have failed the protocol — STOP and ask questions " +
+  "instead.\n" +
+  "\n" +
+  "TURN 2 (after the user answers): Explore the codebase as needed (Read/Glob/Grep) and then write " +
+  "a numbered implementation plan as your final assistant message. Do NOT call Edit, Write, or Bash. " +
   "Surface assumptions, risks, and out-of-scope items.";
 
 const ASK_PROMPT =
