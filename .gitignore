@@ -1,0 +1,9 @@
+node_modules
+dist
+out
+webview-ui/dist
+webview-ui/node_modules
+*.vsix
+.DS_Store
+.env
+.vscode-test

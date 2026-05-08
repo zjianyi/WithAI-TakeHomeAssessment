@@ -1,0 +1,138 @@
+{
+  "name": "claude-coder",
+  "displayName": "Claude Coder",
+  "description": "Agentic coding in VS Code, powered by the Claude Agent SDK.",
+  "version": "0.0.1",
+  "publisher": "withai",
+  "repository": {
+    "type": "git",
+    "url": "https://example.com/claude-coder"
+  },
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.92.0"
+  },
+  "categories": ["AI", "Chat", "Programming Languages"],
+  "keywords": ["claude", "anthropic", "ai", "agent", "chat"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "icon": "media/icon.png",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "claude-coder",
+          "title": "Claude Coder",
+          "icon": "media/sidebar-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "claude-coder": [
+        {
+          "type": "webview",
+          "id": "claude-coder.chat",
+          "name": "Chat",
+          "icon": "media/sidebar-icon.svg",
+          "contextualTitle": "Claude Coder"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "claude-coder.openChat",
+        "title": "Claude Coder: Focus Chat",
+        "category": "Claude Coder"
+      },
+      {
+        "command": "claude-coder.newSession",
+        "title": "Claude Coder: New Session",
+        "category": "Claude Coder"
+      },
+      {
+        "command": "claude-coder.setApiKey",
+        "title": "Claude Coder: Set Anthropic API Key…",
+        "category": "Claude Coder"
+      },
+      {
+        "command": "claude-coder.clearApiKey",
+        "title": "Claude Coder: Clear Anthropic API Key",
+        "category": "Claude Coder"
+      },
+      {
+        "command": "claude-coder.stop",
+        "title": "Claude Coder: Stop",
+        "category": "Claude Coder"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "claude-coder.openChat",
+        "key": "ctrl+l",
+        "mac": "cmd+l",
+        "when": "editorTextFocus || !editorFocus"
+      }
+    ],
+    "configuration": {
+      "title": "Claude Coder",
+      "properties": {
+        "claudeCoder.model": {
+          "type": "string",
+          "default": "claude-sonnet-4-5",
+          "description": "Claude model to use (e.g. claude-sonnet-4-5, claude-opus-4-5)."
+        },
+        "claudeCoder.maxTurns": {
+          "type": "number",
+          "default": 50,
+          "description": "Maximum agent turns per query."
+        },
+        "claudeCoder.permissionMode": {
+          "type": "string",
+          "enum": ["default", "acceptEdits", "bypassPermissions"],
+          "default": "default",
+          "description": "default routes Edit/Write/Bash through an approval dialog. acceptEdits auto-accepts file edits."
+        },
+        "claudeCoder.systemPromptOverride": {
+          "type": "string",
+          "default": "",
+          "description": "Optional override for the system prompt."
+        },
+        "claudeCoder.allowedTools": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
+          "description": "Tools the agent can call."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build:extension": "esbuild src/extension.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist/extension.js --external:vscode --external:@anthropic-ai/claude-agent-sdk",
+    "build:webview": "vite build --config webview-ui/vite.config.ts",
+    "build": "npm run build:extension && npm run build:webview",
+    "watch:extension": "esbuild src/extension.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist/extension.js --external:vscode --external:@anthropic-ai/claude-agent-sdk --watch",
+    "watch:webview": "vite build --watch --config webview-ui/vite.config.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p webview-ui/tsconfig.json",
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository --skip-license"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.133",
+    "diff": "^5.2.0"
+  },
+  "devDependencies": {
+    "@types/diff": "^5.2.1",
+    "@types/node": "^20.12.7",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@types/vscode": "^1.92.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "@vscode/vsce": "^3.1.0",
+    "clsx": "^2.1.1",
+    "esbuild": "^0.21.5",
+    "marked": "^12.0.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.1"
+  }
+}
