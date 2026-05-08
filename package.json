@@ -2,7 +2,7 @@
   "name": "claude-coder",
   "displayName": "Claude Coder",
   "description": "Agentic coding in VS Code with Cursor-style mode switching, parallel subagents, workspace indexer, plan view, and per-run permission control — powered by the Claude Agent SDK.",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "publisher": "withai",
   "repository": {
     "type": "git",
@@ -83,8 +83,8 @@
       "properties": {
         "claudeCoder.model": {
           "type": "string",
-          "default": "claude-sonnet-4-5",
-          "description": "Claude model to use (e.g. claude-sonnet-4-5, claude-opus-4-5)."
+          "default": "claude-sonnet-4-6",
+          "description": "Claude model to use (e.g. claude-sonnet-4-6, claude-opus-4-7)."
         },
         "claudeCoder.maxTurns": {
           "type": "number",
@@ -107,6 +107,17 @@
           "items": { "type": "string" },
           "default": ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
           "description": "Tools the agent can call."
+        },
+        "claudeCoder.effort": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "max"],
+          "default": "high",
+          "description": "Reasoning effort the model applies. low = fastest, max = deepest reasoning (Opus 4.7 only for max)."
+        },
+        "claudeCoder.thinking": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable extended thinking (adaptive). Disable for fastest responses."
         }
       }
     }

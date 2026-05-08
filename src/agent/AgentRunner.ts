@@ -40,6 +40,8 @@ export class AgentRunner {
   private currentMode: Mode = "agent";
   private tokens = new TokenTracker();
   private wsContext: WorkspaceIndex | null = null;
+  /** Cached cost/duration of the last completed run (for /cost). */
+  private lastRunResult: { cost?: number; ms?: number } | null = null;
 
   constructor(
     private readonly provider: ChatViewProvider,
@@ -47,6 +49,10 @@ export class AgentRunner {
     private readonly sessionStore: SessionStore,
   ) {
     this.approval = new ToolApprovalBridge(provider, sessionStore.workspaceRoot());
+  }
+
+  lastResult(): { cost?: number; ms?: number } | null {
+    return this.lastRunResult;
   }
 
   isRunning(): boolean {
@@ -118,7 +124,7 @@ export class AgentRunner {
     const def = MODE_DEFS[activeMode];
 
     const cfg = vscode.workspace.getConfiguration("claudeCoder");
-    const model = cfg.get<string>("model", "claude-sonnet-4-5");
+    const model = cfg.get<string>("model", "claude-sonnet-4-6");
     const maxTurns = cfg.get<number>("maxTurns", 50);
     const baselinePerm = cfg.get<string>("permissionMode", "default") as
       | "default"
@@ -135,6 +141,11 @@ export class AgentRunner {
       "WebSearch",
       "WebFetch",
     ]);
+    // Cursor-style reasoning controls. The SDK accepts `effort` natively
+    // ("low"|"medium"|"high"|"xhigh"|"max") and silently downgrades unsupported
+    // levels per model. We expose 4 of those (xhigh hidden — Opus-4.7-only).
+    const effort = cfg.get<"low" | "medium" | "high" | "max">("effort", "high");
+    const thinkingEnabled = cfg.get<boolean>("thinking", true);
 
     // 1) Start from the mode's tool list, intersect with user's allowedTools.
     //    Preserve any mode-only tools (e.g. Agent in Multitask) so the mode's
@@ -238,7 +249,7 @@ export class AgentRunner {
       env: {
         ...process.env,
         ANTHROPIC_API_KEY: apiKey,
-        CLAUDE_AGENT_SDK_CLIENT_APP: "claude-coder/0.0.4",
+        CLAUDE_AGENT_SDK_CLIENT_APP: "claude-coder/0.0.5",
       } as Record<string, string | undefined>,
       ...(systemPromptOverride
         ? { systemPrompt: systemPromptOverride }
@@ -248,6 +259,8 @@ export class AgentRunner {
       ...(def.agents ? { agents: def.agents } : {}),
       ...(useApproval ? { canUseTool: this.approval.canUseTool } : {}),
       ...(resume ? { resume } : {}),
+      effort,
+      thinking: thinkingEnabled ? { type: "adaptive" } : { type: "disabled" },
     };
 
     try {
@@ -403,6 +416,7 @@ export class AgentRunner {
         };
         const success = r.subtype === "success";
         this.currentSessionId = r.session_id;
+        this.lastRunResult = { cost: r.total_cost_usd, ms: r.duration_ms };
         await this.sessionStore.save(r.session_id);
         this.tokens.ingestResultUsage(
           r.usage as

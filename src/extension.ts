@@ -39,19 +39,8 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand("claude-coder.setApiKey", async () => {
       await secrets.promptAndStore();
-      const cfg = vscode.workspace.getConfiguration("claudeCoder");
-      provider.post({
-        type: "init",
-        hasApiKey: Boolean(await secrets.get()),
-        model: cfg.get<string>("model", "claude-sonnet-4-5"),
-        permissionMode: cfg.get<string>("permissionMode", "default"),
-        cwd: sessionStore.workspaceRoot(),
-        sessionId: sessionStore.get(),
-        mode: "agent",
-        allowedTools: cfg.get<string[]>("allowedTools", [
-          "Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch",
-        ]),
-      });
+      // Re-init the webview with the up-to-date hasApiKey state and current settings.
+      await provider.refreshInit();
     }),
     vscode.commands.registerCommand("claude-coder.clearApiKey", async () => {
       await secrets.clear();

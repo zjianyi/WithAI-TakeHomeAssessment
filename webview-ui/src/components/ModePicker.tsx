@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
-import type { Mode, PermissionOverride, ContextUsage } from "../../../src/util/messages";
+import type { ContextUsage, EffortLevel, Mode, PermissionOverride } from "../../../src/util/messages";
+import { EffortStrip } from "./EffortStrip";
 
 type ModeOption = {
   id: Mode;
@@ -22,13 +23,6 @@ const PERM_OPTIONS: { id: PermissionOverride; label: string; icon: string; hint:
   { id: "acceptEdits", label: "Auto-approve", icon: "⚡", hint: "Apply edits without prompts" },
 ];
 
-const PLACEHOLDER_GROUPS: { label: string; icon: string; arrow?: boolean; tooltip: string }[] = [
-  { label: "Image", icon: "▢", tooltip: "Attach an image — coming soon" },
-  { label: "Models", icon: "✧", arrow: true, tooltip: "Switch model — coming soon" },
-  { label: "Skills", icon: "◆", arrow: true, tooltip: "Browse skills — coming soon" },
-  { label: "MCP Servers", icon: "◈", arrow: true, tooltip: "Configure MCP — coming soon" },
-];
-
 function formatTokens(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`;
   return String(n);
@@ -42,11 +36,39 @@ type Props = {
   /** Per-run permission override — lives in Permissions section. */
   permLevel?: PermissionOverride;
   onPermChange?: (p: PermissionOverride) => void;
-  /** Context usage for the inline context meter. */
+  /** Live context usage for the inline meter. */
   usage?: ContextUsage | null;
+  /** Reasoning effort + thinking toggle (Cursor-style Model section). */
+  effort: EffortLevel;
+  onEffortChange: (e: EffortLevel) => void;
+  thinkingEnabled: boolean;
+  onThinkingChange: (enabled: boolean) => void;
+  /** Bridge to the parent's panel/menu/slash routing. */
+  onAttachFile: () => void;
+  onMentionFile: () => void;
+  onClear: () => void;
+  onSwitchModel: () => void;
+  onAccountUsage: () => void;
 };
 
-export function ModePicker({ open, active, onPick, onClose, permLevel, onPermChange, usage }: Props) {
+export function ModePicker({
+  open,
+  active,
+  onPick,
+  onClose,
+  permLevel,
+  onPermChange,
+  usage,
+  effort,
+  onEffortChange,
+  thinkingEnabled,
+  onThinkingChange,
+  onAttachFile,
+  onMentionFile,
+  onClear,
+  onSwitchModel,
+  onAccountUsage,
+}: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -75,6 +97,45 @@ export function ModePicker({ open, active, onPick, onClose, permLevel, onPermCha
   return (
     <div className="modepicker" ref={ref} role="menu">
       <div className="modepicker-title">Add agents, context, tools…</div>
+
+      {/* ── Context ── */}
+      <div className="modepicker-section-label">Context</div>
+      <div className="modepicker-section">
+        <button
+          className="modepicker-item"
+          onClick={() => { onAttachFile(); onClose(); }}
+          title="Attach a workspace file by name"
+        >
+          <span className="mp-icon" aria-hidden>▢</span>
+          <span className="mp-label">Attach file…</span>
+        </button>
+        <button
+          className="modepicker-item"
+          onClick={() => { onMentionFile(); onClose(); }}
+          title="Insert @ to mention a file from this project"
+        >
+          <span className="mp-icon" aria-hidden>@</span>
+          <span className="mp-label">Mention file from this project…</span>
+        </button>
+        <button
+          className="modepicker-item"
+          onClick={() => { onClear(); onClose(); }}
+          title="Start a fresh transcript (= /clear)"
+        >
+          <span className="mp-icon" aria-hidden>⌫</span>
+          <span className="mp-label">Clear conversation</span>
+        </button>
+        <button
+          className="modepicker-item disabled"
+          disabled
+          title="Rewind a previous turn — coming soon"
+        >
+          <span className="mp-icon" aria-hidden>↺</span>
+          <span className="mp-label">Rewind</span>
+        </button>
+      </div>
+
+      <div className="modepicker-divider" />
 
       {/* ── Modes ── */}
       <div className="modepicker-section-label">Modes</div>
@@ -119,7 +180,7 @@ export function ModePicker({ open, active, onPick, onClose, permLevel, onPermCha
         </>
       )}
 
-      {/* ── Context ── */}
+      {/* ── Context window meter ── */}
       {usage && (
         <>
           <div className="modepicker-section-label">Context window</div>
@@ -139,21 +200,51 @@ export function ModePicker({ open, active, onPick, onClose, permLevel, onPermCha
         </>
       )}
 
-      {/* ── More (placeholders) ── */}
-      <div className="modepicker-section-label">More</div>
+      {/* ── Model ── */}
+      <div className="modepicker-section-label">Model</div>
       <div className="modepicker-section">
-        {PLACEHOLDER_GROUPS.map((g) => (
-          <button
-            key={g.label}
-            className="modepicker-item disabled"
-            disabled
-            title={g.tooltip}
-          >
-            <span className="mp-icon" aria-hidden>{g.icon}</span>
-            <span className="mp-label">{g.label}</span>
-            {g.arrow && <span className="mp-arrow">›</span>}
-          </button>
-        ))}
+        <button
+          className="modepicker-item"
+          onClick={() => { onSwitchModel(); onClose(); }}
+          title="Choose between Sonnet 4.6 / Opus 4.7 / Haiku 4.5"
+        >
+          <span className="mp-icon" aria-hidden>✱</span>
+          <span className="mp-label">Switch model…</span>
+          <span className="mp-arrow">›</span>
+        </button>
+
+        <div className="modepicker-effort">
+          <div className="mp-effort-head">
+            <span className="mp-icon" aria-hidden>⚡</span>
+            <span className="mp-label">Effort</span>
+          </div>
+          <EffortStrip level={effort} onChange={onEffortChange} />
+        </div>
+
+        <button
+          className={`modepicker-item modepicker-toggle${thinkingEnabled ? " on" : ""}`}
+          onClick={() => onThinkingChange(!thinkingEnabled)}
+          title={
+            thinkingEnabled
+              ? "Extended thinking is ON (adaptive). Click to disable for fastest responses."
+              : "Extended thinking is OFF. Click to enable adaptive thinking."
+          }
+        >
+          <span className="mp-icon" aria-hidden>💭</span>
+          <span className="mp-label">Thinking</span>
+          <span className={`mp-toggle${thinkingEnabled ? " on" : ""}`} aria-hidden>
+            <span className="mp-toggle-knob" />
+          </span>
+        </button>
+
+        <button
+          className="modepicker-item"
+          onClick={() => { onAccountUsage(); onClose(); }}
+          title="Last run cost & duration"
+        >
+          <span className="mp-icon" aria-hidden>＄</span>
+          <span className="mp-label">Account &amp; usage</span>
+        </button>
       </div>
     </div>
   );

@@ -6,9 +6,10 @@ import { SecretsStore } from "../auth/secrets";
 import { SessionStore } from "../agent/sessionStore";
 import { findFiles } from "../util/workspaceFiles";
 import type { ToolApprovalBridge } from "../agent/toolApproval";
-import type { ExtToWebviewMessage, WebviewToExtMessage } from "../util/messages";
+import type { EffortLevel, ExtToWebviewMessage, WebviewToExtMessage } from "../util/messages";
 import { isMode } from "../agent/modes";
 import type { PlanDocProvider } from "../agent/planDocProvider";
+import { findSlash, slashCommandsMeta, type SlashCtx } from "../agent/slashCommands";
 
 function nonce(): string {
   let text = "";
@@ -84,19 +85,44 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  /** Public entrypoint so external commands (e.g. setApiKey) can re-sync the webview. */
+  async refreshInit(): Promise<void> {
+    return this.sendInit();
+  }
+
   private async sendInit(): Promise<void> {
     const apiKey = await this.secrets.get();
     const cfg = vscode.workspace.getConfiguration("claudeCoder");
     this.post({
       type: "init",
       hasApiKey: Boolean(apiKey),
-      model: cfg.get<string>("model", "claude-sonnet-4-5"),
+      model: cfg.get<string>("model", "claude-sonnet-4-6"),
       permissionMode: cfg.get<string>("permissionMode", "default"),
       cwd: this.sessionStore.workspaceRoot(),
       sessionId: this.sessionStore.get(),
       mode: this.runner.mode(),
       allowedTools: cfg.get<string[]>("allowedTools", DEFAULT_TOOLS),
+      effort: cfg.get<EffortLevel>("effort", "high"),
+      thinkingEnabled: cfg.get<boolean>("thinking", true),
+      slashCommands: slashCommandsMeta(),
     });
+  }
+
+  /** Build the SlashCtx that local-type slash commands use to take action. */
+  private slashCtx(): SlashCtx {
+    return {
+      post: (msg) => this.post(msg as ExtToWebviewMessage),
+      runAgent: async (prompt: string) => {
+        await this.runner.run({ prompt });
+      },
+      newSession: async () => {
+        await this.runner.newSession();
+      },
+      stop: () => this.runner.stop(),
+      lastResult: () => this.runner.lastResult(),
+      cwd: () => this.sessionStore.workspaceRoot(),
+      sessionId: () => this.runner.sessionId(),
+    };
   }
 
   private async handle(msg: WebviewToExtMessage): Promise<void> {
@@ -199,6 +225,41 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // sendText with addNewLine=false so the user can edit before pressing Enter,
         // matching Cursor's "open in terminal" behaviour.
         term.sendText(msg.command, false);
+        return;
+      }
+      case "setEffort": {
+        await vscode.workspace
+          .getConfiguration("claudeCoder")
+          .update("effort", msg.effort, vscode.ConfigurationTarget.Workspace);
+        this.post({ type: "effortChanged", effort: msg.effort });
+        return;
+      }
+      case "setThinking": {
+        await vscode.workspace
+          .getConfiguration("claudeCoder")
+          .update("thinking", msg.enabled, vscode.ConfigurationTarget.Workspace);
+        this.post({ type: "thinkingChanged", enabled: msg.enabled });
+        return;
+      }
+      case "runSlash": {
+        const cmd = findSlash(msg.name);
+        if (!cmd) {
+          this.post({ type: "info", text: `Unknown slash command: /${msg.name}` });
+          return;
+        }
+        if (cmd.type === "local-jsx") {
+          this.post({ type: "openPanel", panel: cmd.panel });
+          return;
+        }
+        if (cmd.type === "local") {
+          await cmd.run(msg.args, this.slashCtx());
+          return;
+        }
+        // prompt: desugar to an agent run.
+        const prompt = cmd.build(msg.args);
+        // Fire-and-forget so the message handler returns immediately and other
+        // messages (stop, approvals) aren't queued behind this run.
+        void this.runner.run({ prompt });
         return;
       }
     }

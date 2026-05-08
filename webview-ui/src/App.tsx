@@ -3,9 +3,12 @@ import { on, send } from "./lib/vscodeApi";
 import type {
   ApprovalRequestPayload,
   ContextUsage,
+  EffortLevel,
   Mode,
+  PanelKind,
   PermissionBaseline,
   PermissionOverride,
+  SlashCommandMeta,
   StreamItem,
 } from "../../src/util/messages";
 import { READ_ONLY_TOOL_NAMES } from "./util/toolSummary";
@@ -19,6 +22,7 @@ import { Composer } from "./components/Composer";
 import { SubagentWorkstream } from "./components/SubagentWorkstream";
 import { PlanPanel } from "./components/PlanPanel";
 import { PermissionsPanel } from "./components/PermissionsPanel";
+import { HelpPanel } from "./components/HelpPanel";
 
 type InitState = {
   hasApiKey: boolean;
@@ -28,6 +32,9 @@ type InitState = {
   sessionId: string | null;
   mode: Mode;
   allowedTools: string[];
+  effort: EffortLevel;
+  thinkingEnabled: boolean;
+  slashCommands: SlashCommandMeta[];
 };
 
 type AnyItem =
@@ -47,12 +54,15 @@ function looksLikeQuestions(text: string): boolean {
 export function App() {
   const [init, setInit] = useState<InitState>({
     hasApiKey: false,
-    model: "claude-sonnet-4-5",
+    model: "claude-sonnet-4-6",
     permissionMode: "default",
     cwd: null,
     sessionId: null,
     mode: "agent",
     allowedTools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
+    effort: "high",
+    thinkingEnabled: true,
+    slashCommands: [],
   });
   const [items, setItems] = useState<AnyItem[]>([]);
   const [running, setRunning] = useState(false);
@@ -61,6 +71,7 @@ export function App() {
   const [planContent, setPlanContent] = useState<string>("");
   const [planView, setPlanView] = useState<PlanView>("hidden");
   const [permPanelOpen, setPermPanelOpen] = useState(false);
+  const [helpPanelOpen, setHelpPanelOpen] = useState(false);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
 
   // rAF batching refs — accumulate StreamItems between frames, flush together.
@@ -106,6 +117,9 @@ export function App() {
           sessionId: m.sessionId,
           mode: m.mode,
           allowedTools: m.allowedTools,
+          effort: m.effort,
+          thinkingEnabled: m.thinkingEnabled,
+          slashCommands: m.slashCommands,
         });
       } else if (m.type === "stream") {
         if (m.item.kind === "result") {
@@ -163,6 +177,15 @@ export function App() {
           permissionMode: m.baseline.permissionMode,
           allowedTools: m.baseline.allowedTools,
         }));
+      } else if (m.type === "effortChanged") {
+        setInit((s) => ({ ...s, effort: m.effort }));
+      } else if (m.type === "thinkingChanged") {
+        setInit((s) => ({ ...s, thinkingEnabled: m.enabled }));
+      } else if (m.type === "openPanel") {
+        const panel: PanelKind = m.panel;
+        if (panel === "help") setHelpPanelOpen(true);
+        else if (panel === "permissions") setPermPanelOpen(true);
+        // "model" is handled inside Composer (which owns the menu state).
       }
     });
     send({ type: "webviewReady" });
@@ -175,78 +198,18 @@ export function App() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [items]);
 
-  function handleSlash(cmd: string): boolean {
-    switch (cmd) {
-      case "clear":
-        setItems([]);
-        setPlanContent("");
-        setPlanView("hidden");
-        return true;
-      case "new":
-        send({ type: "newSession" });
-        return true;
-      case "resume":
-        setItems((prev) => [
-          ...prev,
-          {
-            kind: "stream",
-            item: {
-              kind: "system",
-              id: `i_${Date.now()}`,
-              text: init.sessionId
-                ? `Will resume session ${init.sessionId.slice(0, 8)} on the next message.`
-                : "No saved session to resume.",
-            },
-          },
-        ]);
-        return true;
-      case "cost":
-        setItems((prev) => [
-          ...prev,
-          {
-            kind: "stream",
-            item: {
-              kind: "system",
-              id: `i_${Date.now()}`,
-              text: lastResult
-                ? `Last run · cost $${(lastResult.cost ?? 0).toFixed(4)} · ${(lastResult.ms ?? 0)}ms`
-                : "No completed runs yet.",
-            },
-          },
-        ]);
-        return true;
-      case "model":
-        setItems((prev) => [
-          ...prev,
-          {
-            kind: "stream",
-            item: { kind: "system", id: `i_${Date.now()}`, text: `Model: ${init.model}` },
-          },
-        ]);
-        return true;
-      case "plan":
-        if (planContent) setPlanView("review");
-        return true;
-      case "help":
-        setItems((prev) => [
-          ...prev,
-          {
-            kind: "stream",
-            item: {
-              kind: "system",
-              id: `i_${Date.now()}`,
-              text:
-                "Commands: /help /clear /new /resume /cost /model /plan. " +
-                "Type @ to mention a workspace file. Press Esc to stop a running agent. " +
-                "Modes: click + to switch (Plan / Debug / Multitask / Ask / Agent). " +
-                "Lock icon (top-right) opens the permissions panel.",
-            },
-          },
-        ]);
-        return true;
-      default:
-        return false;
+  /**
+   * Routes a slash command to the extension dispatcher. The dispatcher decides
+   * whether it's a local action (transcriptCleared/info), a panel open, or a
+   * templated agent prompt. `/plan` stays webview-local because it just toggles
+   * the existing PlanPanel state.
+   */
+  function runSlash(name: string, args: string) {
+    if (name === "plan") {
+      if (planContent) setPlanView("review");
+      return;
     }
+    send({ type: "runSlash", name, args });
   }
 
   const sessionShort = init.sessionId ? init.sessionId.slice(0, 8) : null;
@@ -335,6 +298,13 @@ export function App() {
         onSave={(b) => send({ type: "setPermissionBaseline", baseline: b })}
       />
 
+      <HelpPanel
+        open={helpPanelOpen}
+        commands={init.slashCommands}
+        onClose={() => setHelpPanelOpen(false)}
+        onPick={(name) => runSlash(name, "")}
+      />
+
       <Composer
         running={running}
         mode={init.mode}
@@ -349,9 +319,21 @@ export function App() {
         }}
         onSend={handleSend}
         onStop={() => send({ type: "stop" })}
-        onSlash={handleSlash}
+        onRunSlash={runSlash}
         permissionBaseline={baseline}
         usage={usage}
+        slashCommands={init.slashCommands}
+        effort={init.effort}
+        onEffortChange={(e) => {
+          setInit((s) => ({ ...s, effort: e }));
+          send({ type: "setEffort", effort: e });
+        }}
+        thinkingEnabled={init.thinkingEnabled}
+        onThinkingChange={(on) => {
+          setInit((s) => ({ ...s, thinkingEnabled: on }));
+          send({ type: "setThinking", enabled: on });
+        }}
+        onAccountUsage={() => runSlash("cost", "")}
       />
     </div>
   );

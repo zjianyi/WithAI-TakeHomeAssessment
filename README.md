@@ -201,7 +201,7 @@ Cost: ~$0.02–0.20 per run.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `claudeCoder.model` | `claude-sonnet-4-5` | Model to use |
+| `claudeCoder.model` | `claude-sonnet-4-6` | Model to use |
 | `claudeCoder.maxTurns` | `50` | Max agent turns per query |
 | `claudeCoder.permissionMode` | `default` | `default` (canUseTool prompts), `acceptEdits` (auto-accept file edits), `bypassPermissions` (no prompts). Workspace baseline; per-run pill overrides. |
 | `claudeCoder.systemPromptOverride` | `""` | Optional custom system prompt — when set, it replaces (rather than augments) the per-mode prompt + indexer + project context. |

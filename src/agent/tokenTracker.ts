@@ -5,7 +5,7 @@
  *   inputTokens   = input_tokens + cache_creation_input_tokens + cache_read_input_tokens
  *   outputTokens  = output_tokens
  * The "context window" cap is mode/model-dependent; we keep a small map and
- * default to 200k (Sonnet 4.5 / Opus 4.7).
+ * default to 200k (Sonnet 4.6 / Opus 4.7).
  */
 
 export type TokenSnapshot = {
@@ -20,6 +20,7 @@ export type TokenSnapshot = {
 };
 
 const CONTEXT_LIMIT_BY_MODEL: Record<string, number> = {
+  "claude-sonnet-4-6": 200_000,
   "claude-sonnet-4-5": 200_000,
   "claude-opus-4-7": 200_000,
   "claude-opus-4-5": 200_000,
@@ -44,7 +45,7 @@ export class TokenTracker {
   private cacheCreateTokens = 0;
   private lastTurnInput = 0;
   private lastTurnOutput = 0;
-  private model = "claude-sonnet-4-5";
+  private model = "claude-sonnet-4-6";
 
   setModel(m: string): void {
     this.model = m;

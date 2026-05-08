@@ -99,6 +99,24 @@ export type PermissionBaseline = {
   allowedTools: string[];
 };
 
+/**
+ * Reasoning effort level — passed straight to the SDK `effort` option.
+ * We surface 4 of the 5 SDK levels; xhigh is Opus-4.7-only and we don't expose
+ * it in the picker.
+ */
+export type EffortLevel = "low" | "medium" | "high" | "max";
+
+/** Slash-command UI panels the webview can open in response to /help, /model, /permissions. */
+export type PanelKind = "help" | "permissions" | "model";
+
+/** Lightweight metadata about a registered slash command — synced to the webview for the popup. */
+export type SlashCommandMeta = {
+  name: string;
+  desc: string;
+  /** local | local-jsx | prompt — drives the chip in the help panel. */
+  kind: "local" | "local-jsx" | "prompt";
+};
+
 export type ExtToWebviewMessage =
   | { type: "ready" }
   | {
@@ -110,6 +128,12 @@ export type ExtToWebviewMessage =
       sessionId: string | null;
       mode: Mode;
       allowedTools: string[];
+      /** Active reasoning-effort level (persisted in workspace settings). */
+      effort: EffortLevel;
+      /** Whether extended thinking is enabled (persisted in workspace settings). */
+      thinkingEnabled: boolean;
+      /** Full slash registry surfaced to the webview popup + HelpPanel. */
+      slashCommands: SlashCommandMeta[];
     }
   | { type: "stream"; item: StreamItem }
   | { type: "running"; running: boolean }
@@ -121,7 +145,11 @@ export type ExtToWebviewMessage =
   | { type: "info"; text: string }
   | { type: "contextUsage"; usage: ContextUsage }
   | { type: "modeChanged"; mode: Mode }
-  | { type: "permissionBaseline"; baseline: PermissionBaseline };
+  | { type: "permissionBaseline"; baseline: PermissionBaseline }
+  | { type: "effortChanged"; effort: EffortLevel }
+  | { type: "thinkingChanged"; enabled: boolean }
+  /** Tells the webview to surface a built-in panel (e.g. /help → HelpPanel). */
+  | { type: "openPanel"; panel: PanelKind };
 
 export type WebviewToExtMessage =
   | { type: "webviewReady" }
@@ -153,4 +181,13 @@ export type WebviewToExtMessage =
        */
       type: "mirrorToTerminal";
       command: string;
-    };
+    }
+  | { type: "setEffort"; effort: EffortLevel }
+  | { type: "setThinking"; enabled: boolean }
+  /**
+   * The webview routes a typed slash command (`/init`, `/review`, etc.) to the
+   * extension host, where the registry dispatches it. `local` runs sync logic,
+   * `local-jsx` posts back an `openPanel`, `prompt` desugars into a normal
+   * agent run via the existing query path.
+   */
+  | { type: "runSlash"; name: string; args: string };

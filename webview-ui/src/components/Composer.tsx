@@ -1,29 +1,26 @@
 import React, { useEffect, useRef, useState } from "react";
 import { send, on } from "../lib/vscodeApi";
-import type { ContextUsage, Mode, PermissionOverride, WorkspaceFile } from "../../../src/util/messages";
+import type {
+  ContextUsage,
+  EffortLevel,
+  Mode,
+  PermissionOverride,
+  SlashCommandMeta,
+  WorkspaceFile,
+} from "../../../src/util/messages";
 import { MentionPopup } from "./MentionPopup";
 import { ModePicker, MODE_LABEL } from "./ModePicker";
 
-type SlashCmd = { name: string; desc: string };
-const SLASH_COMMANDS: SlashCmd[] = [
-  { name: "help", desc: "Show available commands" },
-  { name: "clear", desc: "Clear the conversation" },
-  { name: "new", desc: "Start a new session" },
-  { name: "resume", desc: "Resume the last saved session" },
-  { name: "cost", desc: "Show last run cost & duration" },
-  { name: "model", desc: "Print the current model" },
-  { name: "plan", desc: "Re-open the plan view (if any)" },
-];
-
 const MODELS = [
-  { id: "claude-sonnet-4-5", label: "Sonnet 4.5" },
+  { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
   { id: "claude-opus-4-7", label: "Opus 4.7" },
   { id: "claude-haiku-4-5", label: "Haiku 4.5" },
 ];
 
 type Props = {
   onSend: (text: string, mode?: Mode, permission?: PermissionOverride) => void;
-  onSlash: (cmd: string) => boolean;
+  /** Run a registered slash command via the extension dispatcher. */
+  onRunSlash: (name: string, args: string) => void;
   running: boolean;
   onStop: () => void;
   mode: Mode;
@@ -34,6 +31,15 @@ type Props = {
   permissionBaseline: PermissionOverride;
   /** Live context usage for the context meter inside the + menu. */
   usage?: ContextUsage | null;
+  /** Slash-command metadata, synced from the extension at init time. */
+  slashCommands: SlashCommandMeta[];
+  /** Reasoning effort and thinking — Cursor's Model section in the + menu. */
+  effort: EffortLevel;
+  onEffortChange: (e: EffortLevel) => void;
+  thinkingEnabled: boolean;
+  onThinkingChange: (enabled: boolean) => void;
+  /** Parent's "Account & usage" handler (currently → /cost). */
+  onAccountUsage: () => void;
 };
 
 type Trigger =
@@ -43,7 +49,7 @@ type Trigger =
 
 export function Composer({
   onSend,
-  onSlash,
+  onRunSlash,
   running,
   onStop,
   mode,
@@ -52,6 +58,12 @@ export function Composer({
   onModelChange,
   permissionBaseline,
   usage,
+  slashCommands,
+  effort,
+  onEffortChange,
+  thinkingEnabled,
+  onThinkingChange,
+  onAccountUsage,
 }: Props) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
@@ -74,6 +86,8 @@ export function Composer({
           setFiles(m.files);
           setActive(0);
         }
+      } else if (m.type === "openPanel" && m.panel === "model") {
+        setModelOpen(true);
       }
     });
   }, [trigger]);
@@ -103,10 +117,10 @@ export function Composer({
 
   function detectTrigger(value: string, caret: number): Trigger {
     const pre = value.slice(0, caret);
-    const slashMatch = /(^|\n)\/(\w*)$/.exec(pre);
+    const slashMatch = /(^|\n)\/(\w[\w-]*)?$/.exec(pre);
     if (slashMatch) {
-      const start = caret - slashMatch[2].length - 1;
-      return { kind: "slash", query: slashMatch[2], start };
+      const start = caret - (slashMatch[2]?.length ?? 0) - 1;
+      return { kind: "slash", query: slashMatch[2] ?? "", start };
     }
     const m = /(^|[^\w])@([\w./\\-]*)$/.exec(pre);
     if (m) {
@@ -126,7 +140,7 @@ export function Composer({
     }
   }
 
-  const filteredSlash = SLASH_COMMANDS.filter((c) =>
+  const filteredSlash = slashCommands.filter((c) =>
     trigger.kind === "slash" ? c.name.startsWith(trigger.query) : true,
   );
 
@@ -148,7 +162,7 @@ export function Composer({
     });
   }
 
-  function pickSlash(c: SlashCmd) {
+  function pickSlash(c: SlashCommandMeta) {
     if (trigger.kind !== "slash" || !taRef.current) return;
     const caret = taRef.current.selectionStart;
     const before = text.slice(0, trigger.start);
@@ -169,11 +183,17 @@ export function Composer({
     const t = text.trim();
     if (!t) return;
     if (t.startsWith("/")) {
-      const cmd = t.slice(1).split(/\s+/)[0];
-      if (onSlash(cmd)) {
+      // Parse `/<name> <args...>`.
+      const space = t.indexOf(" ");
+      const name = space === -1 ? t.slice(1) : t.slice(1, space);
+      const args = space === -1 ? "" : t.slice(space + 1);
+      // Anything matching a registered command goes through the dispatcher.
+      if (slashCommands.some((c) => c.name === name)) {
+        onRunSlash(name, args);
         setText("");
         return;
       }
+      // Unknown slash → fall through to send as a normal prompt.
     }
     onSend(t, mode, permLevel);
     setText("");
@@ -242,13 +262,40 @@ export function Composer({
   const currentModel = MODELS.find((m) => m.id === model)?.label ?? model;
   const showModePill = mode !== "agent";
 
+  /** Insert "@" at the caret to trigger the file mention popup. */
+  function startMention() {
+    const ta = taRef.current;
+    if (!ta) return;
+    const caret = ta.selectionStart;
+    const before = text.slice(0, caret);
+    const after = text.slice(caret);
+    // Preceding char must be non-word for the @-trigger regex to fire.
+    const pad = before.length > 0 && /\w/.test(before[before.length - 1]!) ? " " : "";
+    const next = `${before}${pad}@${after}`;
+    setText(next);
+    requestAnimationFrame(() => {
+      const pos = (before + pad + "@").length;
+      ta.focus();
+      ta.setSelectionRange(pos, pos);
+      handleChange(next, pos);
+    });
+  }
+
   return (
     <div className="composer">
       {trigger.kind === "file" && (
         <MentionPopup mode="files" files={files} active={active} onPick={pickFile} />
       )}
       {trigger.kind === "slash" && (
-        <MentionPopup mode="slash" commands={filteredSlash} active={active} onPick={pickSlash} />
+        <MentionPopup
+          mode="slash"
+          commands={filteredSlash.map((c) => ({ name: c.name, desc: c.desc }))}
+          active={active}
+          onPick={(picked) => {
+            const m = filteredSlash.find((s) => s.name === picked.name);
+            if (m) pickSlash(m);
+          }}
+        />
       )}
 
       <div className="composer-shell">
@@ -267,12 +314,11 @@ export function Composer({
               <button
                 className="plus"
                 onClick={() => setPickerOpen((v) => !v)}
-                title="Modes, permissions & context"
+                title="Modes, permissions, model & context"
                 aria-label="Open modes and tools"
               >
                 +
               </button>
-              {/* ModePicker now hosts Modes + Permissions + Context + More */}
               <ModePicker
                 open={pickerOpen}
                 active={mode}
@@ -281,6 +327,19 @@ export function Composer({
                 permLevel={permLevel}
                 onPermChange={setPermLevel}
                 usage={usage}
+                effort={effort}
+                onEffortChange={onEffortChange}
+                thinkingEnabled={thinkingEnabled}
+                onThinkingChange={onThinkingChange}
+                onAttachFile={() => {
+                  startMention();
+                }}
+                onMentionFile={() => {
+                  startMention();
+                }}
+                onClear={() => onRunSlash("clear", "")}
+                onSwitchModel={() => setModelOpen(true)}
+                onAccountUsage={() => onAccountUsage()}
               />
             </div>
 
@@ -329,14 +388,6 @@ export function Composer({
           </div>
 
           <div className="right">
-            <button
-              className="mic"
-              disabled
-              title="Voice — coming soon"
-              aria-label="Voice input (coming soon)"
-            >
-              🎤
-            </button>
             {running ? (
               <button className="send-round stop" onClick={onStop} title="Stop">
                 ■
