@@ -126,6 +126,8 @@ export type ExtToWebviewMessage =
       permissionMode: string;
       cwd: string | null;
       sessionId: string | null;
+      /** ID of the last agent session before "new session" — restorable via /resume. */
+      previousSessionId: string | null;
       mode: Mode;
       allowedTools: string[];
       /** Active reasoning-effort level (persisted in workspace settings). */
@@ -140,7 +142,7 @@ export type ExtToWebviewMessage =
   | { type: "approval-request"; payload: ApprovalRequestPayload }
   | { type: "approval-cancelled"; id: string }
   | { type: "files"; query: string; files: WorkspaceFile[] }
-  | { type: "session"; sessionId: string | null }
+  | { type: "session"; sessionId: string | null; previousSessionId?: string | null }
   | { type: "transcriptCleared" }
   | { type: "info"; text: string }
   | { type: "contextUsage"; usage: ContextUsage }

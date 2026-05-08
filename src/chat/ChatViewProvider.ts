@@ -100,6 +100,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       permissionMode: cfg.get<string>("permissionMode", "default"),
       cwd: this.sessionStore.workspaceRoot(),
       sessionId: this.sessionStore.get(),
+      previousSessionId: this.sessionStore.getPrevious(),
       mode: this.runner.mode(),
       allowedTools: cfg.get<string[]>("allowedTools", DEFAULT_TOOLS),
       effort: cfg.get<EffortLevel>("effort", "high"),
@@ -122,6 +123,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       lastResult: () => this.runner.lastResult(),
       cwd: () => this.sessionStore.workspaceRoot(),
       sessionId: () => this.runner.sessionId(),
+      restorePreviousSession: async () => {
+        const id = await this.sessionStore.restorePreviousAsCurrent();
+        if (id) {
+          this.runner.syncSessionId(id);
+          this.post({
+            type: "session",
+            sessionId: id,
+            previousSessionId: this.sessionStore.getPrevious(),
+          });
+        }
+        return id;
+      },
     };
   }
 

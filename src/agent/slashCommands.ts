@@ -26,8 +26,13 @@ export type SlashCtx = {
   post: (msg: { type: string; [k: string]: unknown }) => void;
   /** Run the agent with a templated prompt (used by `prompt`-type commands). */
   runAgent: (prompt: string) => Promise<void>;
-  /** Start a brand-new session (drops resume id + transcript). */
+  /** Start a new agent session: archives the current SDK session id for /resume; does not clear chat UI. */
   newSession: () => Promise<void>;
+  /**
+   * Move the archived session id (from the last /new) back to the active slot
+   * so the next `run()` resumes that agent thread.
+   */
+  restorePreviousSession: () => Promise<string | null>;
   /** Stop any in-flight run. */
   stop: () => void;
   /** Get the last completed run's cost/duration (for /cost). */
@@ -163,14 +168,22 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   {
     type: "local",
     name: "resume",
-    desc: "Resume the last saved session",
-    run: (_args, ctx) => {
-      const sid = ctx.sessionId();
+    desc: "Resume the archived agent session (after /new)",
+    run: async (_args, ctx) => {
+      const id = await ctx.restorePreviousSession();
+      if (id) {
+        ctx.post({
+          type: "info",
+          text: `Restored agent session ${id.slice(0, 8)}… — your next message continues that conversation.`,
+        });
+        return;
+      }
+      const cur = ctx.sessionId();
       ctx.post({
         type: "info",
-        text: sid
-          ? `Will resume session ${sid.slice(0, 8)} on the next message.`
-          : "No saved session to resume.",
+        text: cur
+          ? `Active session ${cur.slice(0, 8)}… — nothing archived to restore. Use /new to archive the current agent thread first.`
+          : "No archived session yet. Use /new while a session is active to save it for /resume.",
       });
     },
   },

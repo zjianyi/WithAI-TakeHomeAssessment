@@ -71,6 +71,13 @@ button { font: inherit; }
   font-size: 11px;
   color: var(--subtle);
 }
+.miniheader .session-prev {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--subtle);
+  opacity: 0.85;
+  margin-left: 2px;
+}
 .miniheader .spacer { flex: 1; }
 .miniheader .iconbtn {
   background: transparent;

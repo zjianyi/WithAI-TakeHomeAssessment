@@ -2,7 +2,7 @@
   "name": "claude-coder",
   "displayName": "Craig Code",
   "description": "Agentic coding in VS Code with Cursor-style mode switching, parallel subagents, workspace indexer, plan view, and per-run permission control — powered by the Claude Agent SDK.",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "publisher": "withai",
   "repository": {
     "type": "git",

@@ -79,6 +79,11 @@ export class AgentRunner {
     return this.currentSessionId ?? this.sessionStore.get();
   }
 
+  /** After /resume archives are promoted into the active memento slot, keep the in-memory id in sync. */
+  syncSessionId(id: string | null): void {
+    this.currentSessionId = id;
+  }
+
   mode(): Mode {
     return this.currentMode;
   }
@@ -98,10 +103,23 @@ export class AgentRunner {
     this.currentSessionId = null;
     this.tokens.reset();
     this.wsContext = null;
+    await this.sessionStore.archiveCurrentForNewSession();
     this.provider.post({ type: "contextUsage", usage: this.tokens.snapshot() });
-    await this.sessionStore.clear();
-    this.provider.post({ type: "session", sessionId: null });
-    this.provider.post({ type: "transcriptCleared" });
+    this.provider.post({
+      type: "session",
+      sessionId: null,
+      previousSessionId: this.sessionStore.getPrevious(),
+    });
+    this.provider.post({
+      type: "stream",
+      item: {
+        kind: "system",
+        id: id(),
+        text:
+          "— New agent session — Chat above is unchanged. The model starts a fresh thread on your next message. " +
+          "Use /resume first if you want the next send to continue the previous agent session instead.",
+      },
+    });
   }
 
   async run({ prompt, resumeSessionId, mode, permissionModeOverride }: RunOptions): Promise<void> {
@@ -256,7 +274,7 @@ export class AgentRunner {
       env: {
         ...process.env,
         ANTHROPIC_API_KEY: apiKey,
-        CLAUDE_AGENT_SDK_CLIENT_APP: "craig-code/0.0.6",
+        CLAUDE_AGENT_SDK_CLIENT_APP: "craig-code/0.0.7",
       } as Record<string, string | undefined>,
       ...(systemPromptOverride
         ? { systemPrompt: systemPromptOverride }
@@ -361,7 +379,11 @@ export class AgentRunner {
           };
           this.currentSessionId = sysInit.session_id;
           await this.sessionStore.save(sysInit.session_id);
-          this.provider.post({ type: "session", sessionId: sysInit.session_id });
+          this.provider.post({
+            type: "session",
+            sessionId: sysInit.session_id,
+            previousSessionId: this.sessionStore.getPrevious(),
+          });
           this.provider.post({
             type: "stream",
             item: {
@@ -486,6 +508,11 @@ export class AgentRunner {
         this.currentSessionId = r.session_id;
         this.lastRunResult = { cost: r.total_cost_usd, ms: r.duration_ms };
         await this.sessionStore.save(r.session_id);
+        this.provider.post({
+          type: "session",
+          sessionId: r.session_id,
+          previousSessionId: this.sessionStore.getPrevious(),
+        });
         this.tokens.ingestResultUsage(
           r.usage as
             | {

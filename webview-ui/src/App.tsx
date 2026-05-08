@@ -29,6 +29,8 @@ type InitState = {
   permissionMode: string;
   cwd: string | null;
   sessionId: string | null;
+  /** Archived SDK session from the last "new session" — restorable via /resume. */
+  previousSessionId: string | null;
   mode: Mode;
   allowedTools: string[];
   effort: EffortLevel;
@@ -57,6 +59,7 @@ export function App() {
     permissionMode: "default",
     cwd: null,
     sessionId: null,
+    previousSessionId: null,
     mode: "agent",
     allowedTools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
     effort: "high",
@@ -120,6 +123,7 @@ export function App() {
           permissionMode: m.permissionMode,
           cwd: m.cwd,
           sessionId: m.sessionId,
+          previousSessionId: m.previousSessionId,
           mode: m.mode,
           allowedTools: m.allowedTools,
           effort: m.effort,
@@ -149,7 +153,11 @@ export function App() {
       } else if (m.type === "approval-cancelled") {
         setItems((prev) => prev.filter((x) => !(x.kind === "approval" && x.payload.id === m.id)));
       } else if (m.type === "session") {
-        setInit((s) => ({ ...s, sessionId: m.sessionId }));
+        setInit((s) => ({
+          ...s,
+          sessionId: m.sessionId,
+          ...(m.previousSessionId !== undefined ? { previousSessionId: m.previousSessionId } : {}),
+        }));
       } else if (m.type === "transcriptCleared") {
         // Flush any pending batch first so it doesn't land after the clear.
         if (rafId.current !== null) {
@@ -238,6 +246,11 @@ export function App() {
           Craig Code
         </span>
         {sessionShort && <span className="session">session {sessionShort}</span>}
+        {init.previousSessionId && (
+          <span className="session-prev" title="Run /resume before your next message to continue this agent thread">
+            prev {init.previousSessionId.slice(0, 8)}
+          </span>
+        )}
         <span className="spacer" />
         <button
           className={`iconbtn lockbtn${permPanelOpen ? " active" : ""}`}
