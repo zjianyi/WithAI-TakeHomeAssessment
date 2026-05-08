@@ -7,6 +7,7 @@ import { SessionStore } from "../agent/sessionStore";
 import { findFiles } from "../util/workspaceFiles";
 import type { ToolApprovalBridge } from "../agent/toolApproval";
 import type { ExtToWebviewMessage, WebviewToExtMessage } from "../util/messages";
+import { isMode } from "../agent/modes";
 
 function nonce(): string {
   let text = "";
@@ -84,6 +85,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       permissionMode: cfg.get<string>("permissionMode", "default"),
       cwd: this.sessionStore.workspaceRoot(),
       sessionId: this.sessionStore.get(),
+      mode: this.runner.mode(),
     });
   }
 
@@ -93,7 +95,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await this.sendInit();
         return;
       case "send":
-        await this.runner.run({ prompt: msg.text });
+        await this.runner.run({ prompt: msg.text, mode: msg.mode });
+        return;
+      case "setMode":
+        if (isMode(msg.mode)) this.runner.setMode(msg.mode);
+        return;
+      case "setModel":
+        await vscode.workspace
+          .getConfiguration("claudeCoder")
+          .update("model", msg.model, vscode.ConfigurationTarget.Global);
+        await this.sendInit();
         return;
       case "stop":
         this.runner.stop();

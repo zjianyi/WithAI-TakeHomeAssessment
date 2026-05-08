@@ -31,6 +31,7 @@ export function activate(context: vscode.ExtensionContext): void {
           .get<string>("permissionMode", "default"),
         cwd: sessionStore.workspaceRoot(),
         sessionId: sessionStore.get(),
+        mode: "agent",
       });
     }),
     vscode.commands.registerCommand("claude-coder.clearApiKey", async () => {

@@ -4,6 +4,8 @@
  * to keep a single source of truth for the message shapes).
  */
 
+export type Mode = "agent" | "plan" | "ask" | "multitask" | "debug";
+
 export type WorkspaceFile = {
   path: string;
   rel: string;
@@ -20,15 +22,32 @@ export type ApprovalRequestPayload = {
   filePath?: string;
 };
 
+export type ContextUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  contextLimit: number;
+  cacheReadTokens: number;
+  cacheCreateTokens: number;
+  lastTurnInput: number;
+  lastTurnOutput: number;
+};
+
 export type StreamItem =
-  | { kind: "user"; text: string; id: string }
-  | { kind: "assistant_text"; text: string; id: string; messageId?: string }
+  | { kind: "user"; text: string; id: string; mode?: Mode }
+  | {
+      kind: "assistant_text";
+      text: string;
+      id: string;
+      messageId?: string;
+      parentToolUseId?: string | null;
+    }
   | {
       kind: "tool_use";
       id: string;
       toolUseId: string;
       name: string;
       input: Record<string, unknown>;
+      parentToolUseId?: string | null;
     }
   | {
       kind: "tool_result";
@@ -36,6 +55,7 @@ export type StreamItem =
       toolUseId: string;
       content: unknown;
       isError?: boolean;
+      parentToolUseId?: string | null;
     }
   | { kind: "system"; id: string; text: string }
   | { kind: "error"; id: string; text: string }
@@ -58,6 +78,7 @@ export type ExtToWebviewMessage =
       permissionMode: string;
       cwd: string | null;
       sessionId: string | null;
+      mode: Mode;
     }
   | { type: "stream"; item: StreamItem }
   | { type: "running"; running: boolean }
@@ -66,11 +87,13 @@ export type ExtToWebviewMessage =
   | { type: "files"; query: string; files: WorkspaceFile[] }
   | { type: "session"; sessionId: string | null }
   | { type: "transcriptCleared" }
-  | { type: "info"; text: string };
+  | { type: "info"; text: string }
+  | { type: "contextUsage"; usage: ContextUsage }
+  | { type: "modeChanged"; mode: Mode };
 
 export type WebviewToExtMessage =
   | { type: "webviewReady" }
-  | { type: "send"; text: string }
+  | { type: "send"; text: string; mode?: Mode }
   | { type: "stop" }
   | {
       type: "approval-response";
@@ -81,4 +104,6 @@ export type WebviewToExtMessage =
   | { type: "newSession" }
   | { type: "setApiKey" }
   | { type: "openFile"; path: string }
-  | { type: "openExternal"; url: string };
+  | { type: "openExternal"; url: string }
+  | { type: "setMode"; mode: Mode }
+  | { type: "setModel"; model: string };
