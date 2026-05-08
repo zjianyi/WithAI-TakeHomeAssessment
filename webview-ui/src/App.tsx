@@ -1,11 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { on, send } from "./lib/vscodeApi";
-import type { ApprovalRequestPayload, StreamItem } from "../../src/util/messages";
+import type {
+  ApprovalRequestPayload,
+  ContextUsage,
+  Mode,
+  StreamItem,
+} from "../../src/util/messages";
 import { Welcome } from "./components/Welcome";
 import { ToolUseBlock } from "./components/ToolUseBlock";
 import { ApprovalDialog } from "./components/ApprovalDialog";
 import { Markdown } from "./components/Markdown";
 import { Composer } from "./components/Composer";
+import { ContextBar } from "./components/ContextBar";
+import { SubagentWorkstream } from "./components/SubagentWorkstream";
 
 type InitState = {
   hasApiKey: boolean;
@@ -13,6 +20,7 @@ type InitState = {
   permissionMode: string;
   cwd: string | null;
   sessionId: string | null;
+  mode: Mode;
 };
 
 type AnyItem =
@@ -26,14 +34,14 @@ export function App() {
     permissionMode: "default",
     cwd: null,
     sessionId: null,
+    mode: "agent",
   });
   const [items, setItems] = useState<AnyItem[]>([]);
   const [running, setRunning] = useState(false);
   const [lastResult, setLastResult] = useState<{ cost?: number; ms?: number } | null>(null);
+  const [usage, setUsage] = useState<ContextUsage | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
 
-  // Tool result lookup: by tool_use_id, also fold streamed assistant text
-  // chunks belonging to the same assistant message into one bubble.
   const collapsed = useMemo(() => collapse(items), [items]);
 
   useEffect(() => {
@@ -45,6 +53,7 @@ export function App() {
           permissionMode: m.permissionMode,
           cwd: m.cwd,
           sessionId: m.sessionId,
+          mode: m.mode,
         });
       } else if (m.type === "stream") {
         if (m.item.kind === "result") {
@@ -62,11 +71,16 @@ export function App() {
       } else if (m.type === "transcriptCleared") {
         setItems([]);
         setLastResult(null);
+        setUsage(null);
       } else if (m.type === "info") {
         setItems((prev) => [
           ...prev,
           { kind: "stream", item: { kind: "system", id: `i_${Date.now()}`, text: m.text } },
         ]);
+      } else if (m.type === "contextUsage") {
+        setUsage(m.usage);
+      } else if (m.type === "modeChanged") {
+        setInit((s) => ({ ...s, mode: m.mode }));
       }
     });
     send({ type: "webviewReady" });
@@ -135,7 +149,8 @@ export function App() {
               id: `i_${Date.now()}`,
               text:
                 "Commands: /help /clear /new /resume /cost /model. " +
-                "Type @ to mention a workspace file. Press Esc to stop a running agent.",
+                "Type @ to mention a workspace file. Press Esc to stop a running agent. " +
+                "Modes: click + to switch (Plan / Debug / Multitask / Ask / Agent).",
             },
           },
         ]);
@@ -145,15 +160,16 @@ export function App() {
     }
   }
 
+  const sessionShort = init.sessionId ? init.sessionId.slice(0, 8) : null;
+
   return (
     <div className="app">
-      <div className="topbar">
+      <div className="miniheader">
         <span className="brand">
-          <span className="mark">●</span> Claude Coder
+          <span className="mark">●</span>
+          Claude Coder
         </span>
-        <span className="pill accent">{init.model}</span>
-        <span className="pill">mode: {init.permissionMode}</span>
-        {init.sessionId && <span className="pill">session {init.sessionId.slice(0, 8)}</span>}
+        {sessionShort && <span className="session">session {sessionShort}</span>}
         <span className="spacer" />
         <button
           className="iconbtn"
@@ -163,27 +179,36 @@ export function App() {
           ＋ new
         </button>
         {!init.hasApiKey && (
-          <button className="iconbtn" title="Set API key" onClick={() => send({ type: "setApiKey" })}>
-            key
+          <button
+            className="iconbtn"
+            title="Set API key"
+            onClick={() => send({ type: "setApiKey" })}
+          >
+            set API key
           </button>
         )}
       </div>
 
       <div className="transcript" ref={transcriptRef}>
         {items.length === 0 && <Welcome hasApiKey={init.hasApiKey} />}
-        {collapsed.map((entry) => renderEntry(entry))}
+        {renderEntries(collapsed)}
       </div>
 
-      <div className="statusbar">
-        <span>cwd: {init.cwd ?? "(no folder)"}</span>
-        <span className="spacer" />
-        {lastResult?.cost !== undefined && <span>cost ${lastResult.cost.toFixed(4)}</span>}
-        {running && <span className="running">● running</span>}
-      </div>
+      <ContextBar usage={usage} />
 
       <Composer
         running={running}
-        onSend={(t) => send({ type: "send", text: t })}
+        mode={init.mode}
+        onModeChange={(m) => {
+          setInit((s) => ({ ...s, mode: m }));
+          send({ type: "setMode", mode: m });
+        }}
+        model={init.model}
+        onModelChange={(m) => {
+          setInit((s) => ({ ...s, model: m }));
+          send({ type: "setModel", model: m });
+        }}
+        onSend={(t, mode) => send({ type: "send", text: t, mode })}
         onStop={() => send({ type: "stop" })}
         onSlash={handleSlash}
       />
@@ -191,9 +216,9 @@ export function App() {
   );
 }
 
-type CollapsedEntry =
-  | { kind: "user"; id: string; text: string }
-  | { kind: "assistant"; id: string; text: string }
+export type CollapsedEntry =
+  | { kind: "user"; id: string; text: string; mode?: Mode }
+  | { kind: "assistant"; id: string; text: string; parentToolUseId?: string | null }
   | {
       kind: "tool";
       id: string;
@@ -201,10 +226,18 @@ type CollapsedEntry =
       name: string;
       input: Record<string, unknown>;
       result?: { content: unknown; isError?: boolean };
+      parentToolUseId?: string | null;
     }
   | { kind: "system"; id: string; text: string }
   | { kind: "error"; id: string; text: string }
-  | { kind: "result"; id: string; success: boolean; text: string; cost?: number; ms?: number }
+  | {
+      kind: "result";
+      id: string;
+      success: boolean;
+      text: string;
+      cost?: number;
+      ms?: number;
+    }
   | { kind: "approval"; payload: ApprovalRequestPayload };
 
 function collapse(items: AnyItem[]): CollapsedEntry[] {
@@ -217,11 +250,26 @@ function collapse(items: AnyItem[]): CollapsedEntry[] {
       continue;
     }
     const m = it.item;
-    if (m.kind === "user") out.push({ kind: "user", id: m.id, text: m.text });
+    if (m.kind === "user") out.push({ kind: "user", id: m.id, text: m.text, mode: m.mode });
     else if (m.kind === "assistant_text") {
       const last = out[out.length - 1];
-      if (last && last.kind === "assistant") last.text += m.text;
-      else out.push({ kind: "assistant", id: m.id, text: m.text });
+      // Only fold streaming text into the previous assistant block if their
+      // parent_tool_use_id matches — otherwise nested subagent output would
+      // collapse into the parent's bubble.
+      if (
+        last &&
+        last.kind === "assistant" &&
+        (last.parentToolUseId ?? null) === (m.parentToolUseId ?? null)
+      ) {
+        last.text += m.text;
+      } else {
+        out.push({
+          kind: "assistant",
+          id: m.id,
+          text: m.text,
+          parentToolUseId: m.parentToolUseId ?? null,
+        });
+      }
     } else if (m.kind === "tool_use") {
       const e: CollapsedEntry = {
         kind: "tool",
@@ -229,20 +277,23 @@ function collapse(items: AnyItem[]): CollapsedEntry[] {
         toolUseId: m.toolUseId,
         name: m.name,
         input: m.input,
+        parentToolUseId: m.parentToolUseId ?? null,
       };
       toolByUseId.set(m.toolUseId, e as CollapsedEntry & { kind: "tool" });
       out.push(e);
     } else if (m.kind === "tool_result") {
       const t = toolByUseId.get(m.toolUseId);
       if (t) t.result = { content: m.content, isError: m.isError };
-      else out.push({
-        kind: "tool",
-        id: m.id,
-        toolUseId: m.toolUseId,
-        name: "tool",
-        input: {},
-        result: { content: m.content, isError: m.isError },
-      });
+      else
+        out.push({
+          kind: "tool",
+          id: m.id,
+          toolUseId: m.toolUseId,
+          name: "tool",
+          input: {},
+          result: { content: m.content, isError: m.isError },
+          parentToolUseId: m.parentToolUseId ?? null,
+        });
     } else if (m.kind === "system") out.push({ kind: "system", id: m.id, text: m.text });
     else if (m.kind === "error") out.push({ kind: "error", id: m.id, text: m.text });
     else if (m.kind === "result")
@@ -258,12 +309,62 @@ function collapse(items: AnyItem[]): CollapsedEntry[] {
   return out;
 }
 
-function renderEntry(e: CollapsedEntry): React.ReactNode {
+/**
+ * Group entries: top-level entries render normally; entries with a
+ * parentToolUseId render under the matching Agent tool block as a nested
+ * subagent workstream (see SubagentWorkstream).
+ */
+function renderEntries(entries: CollapsedEntry[]): React.ReactNode[] {
+  // Bucket child entries by parentToolUseId.
+  const childrenByParent = new Map<string, CollapsedEntry[]>();
+  for (const e of entries) {
+    let parent: string | null = null;
+    if (e.kind === "assistant") parent = e.parentToolUseId ?? null;
+    else if (e.kind === "tool") parent = e.parentToolUseId ?? null;
+    if (parent) {
+      if (!childrenByParent.has(parent)) childrenByParent.set(parent, []);
+      childrenByParent.get(parent)!.push(e);
+    }
+  }
+
+  const nodes: React.ReactNode[] = [];
+  for (const e of entries) {
+    // Skip child nodes — they render inside their parent's workstream.
+    if (
+      (e.kind === "assistant" && (e.parentToolUseId ?? null)) ||
+      (e.kind === "tool" && (e.parentToolUseId ?? null))
+    ) {
+      continue;
+    }
+    if (e.kind === "tool" && e.name === "Agent") {
+      const subId = e.toolUseId;
+      const kids = childrenByParent.get(subId) ?? [];
+      nodes.push(
+        <SubagentWorkstream
+          key={e.id}
+          parentTool={e}
+          entries={kids}
+          renderEntry={renderEntry}
+        />,
+      );
+      continue;
+    }
+    nodes.push(renderEntry(e));
+  }
+  return nodes;
+}
+
+export function renderEntry(e: CollapsedEntry): React.ReactNode {
   switch (e.kind) {
     case "user":
       return (
         <div key={e.id} className="msg user">
-          <div className="label">you</div>
+          <div className="label">
+            you
+            {e.mode && e.mode !== "agent" && (
+              <span className="mode-tag">{e.mode}</span>
+            )}
+          </div>
           <div className="bubble">{e.text}</div>
         </div>
       );

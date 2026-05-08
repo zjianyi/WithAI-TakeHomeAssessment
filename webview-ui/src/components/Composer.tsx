@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { send, on } from "../lib/vscodeApi";
-import type { WorkspaceFile } from "../../../src/util/messages";
+import type { Mode, WorkspaceFile } from "../../../src/util/messages";
 import { MentionPopup } from "./MentionPopup";
+import { ModePicker, MODE_LABEL } from "./ModePicker";
 
 type SlashCmd = { name: string; desc: string };
 const SLASH_COMMANDS: SlashCmd[] = [
@@ -13,11 +14,21 @@ const SLASH_COMMANDS: SlashCmd[] = [
   { name: "model", desc: "Print the current model" },
 ];
 
+const MODELS = [
+  { id: "claude-sonnet-4-5", label: "Sonnet 4.5" },
+  { id: "claude-opus-4-7", label: "Opus 4.7" },
+  { id: "claude-haiku-4-5", label: "Haiku 4.5" },
+];
+
 type Props = {
-  onSend: (text: string) => void;
-  onSlash: (cmd: string) => boolean; // returns true if handled locally
+  onSend: (text: string, mode?: Mode) => void;
+  onSlash: (cmd: string) => boolean;
   running: boolean;
   onStop: () => void;
+  mode: Mode;
+  onModeChange: (m: Mode) => void;
+  model: string;
+  onModelChange: (m: string) => void;
 };
 
 type Trigger =
@@ -25,12 +36,24 @@ type Trigger =
   | { kind: "file"; query: string; start: number }
   | { kind: "slash"; query: string; start: number };
 
-export function Composer({ onSend, onSlash, running, onStop }: Props) {
+export function Composer({
+  onSend,
+  onSlash,
+  running,
+  onStop,
+  mode,
+  onModeChange,
+  model,
+  onModelChange,
+}: Props) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [trigger, setTrigger] = useState<Trigger>({ kind: "none" });
   const [active, setActive] = useState(0);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const modelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     return on((m) => {
@@ -50,9 +73,24 @@ export function Composer({ onSend, onSlash, running, onStop }: Props) {
     }
   }, [text]);
 
+  useEffect(() => {
+    if (!modelOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (modelRef.current && !modelRef.current.contains(e.target as Node)) setModelOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setModelOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [modelOpen]);
+
   function detectTrigger(value: string, caret: number): Trigger {
     const pre = value.slice(0, caret);
-    // Slash command must be at start (or after newline)
     const slashMatch = /(^|\n)\/(\w*)$/.exec(pre);
     if (slashMatch) {
       const start = caret - slashMatch[2].length - 1;
@@ -125,7 +163,7 @@ export function Composer({ onSend, onSlash, running, onStop }: Props) {
         return;
       }
     }
-    onSend(t);
+    onSend(t, mode);
     setText("");
   }
 
@@ -177,36 +215,129 @@ export function Composer({ onSend, onSlash, running, onStop }: Props) {
     }
   }
 
+  const placeholder = running
+    ? "Agent is running… Esc to stop"
+    : mode === "plan"
+      ? "Plan first — what do you want me to build?"
+      : mode === "ask"
+        ? "Ask Claude anything…"
+        : mode === "multitask"
+          ? "Describe work that can run in parallel…"
+          : mode === "debug"
+            ? "What's the bug?"
+            : "Ask Claude to edit…";
+
+  const currentModel = MODELS.find((m) => m.id === model)?.label ?? model;
+  const showModePill = mode !== "agent";
+
   return (
     <div className="composer">
-      {trigger.kind === "file" && <MentionPopup mode="files" files={files} active={active} onPick={pickFile} />}
+      {trigger.kind === "file" && (
+        <MentionPopup mode="files" files={files} active={active} onPick={pickFile} />
+      )}
       {trigger.kind === "slash" && (
         <MentionPopup mode="slash" commands={filteredSlash} active={active} onPick={pickSlash} />
       )}
-      <div className="row">
+
+      <div className="composer-shell">
         <textarea
           ref={taRef}
           rows={1}
-          placeholder={running ? "Agent is running… Esc to stop" : "Ask anything (use @ to reference files, / for commands)"}
+          className="composer-textarea"
+          placeholder={placeholder}
           value={text}
           onChange={(e) => handleChange(e.target.value, e.target.selectionStart)}
           onKeyDown={onKeyDown}
         />
-        {running ? (
-          <button className="stop" onClick={onStop} title="Stop">
-            Stop
-          </button>
-        ) : (
-          <button className="send" onClick={submit} disabled={!text.trim()} title="Send (Enter)">
-            Send
-          </button>
-        )}
-      </div>
-      <div className="hint">
-        <span>
-          <kbd>Enter</kbd> send · <kbd>Shift+Enter</kbd> newline · <kbd>@</kbd> file · <kbd>/</kbd> command
-        </span>
-        <span>{running ? "running…" : ""}</span>
+        <div className="composer-controls">
+          <div className="left">
+            <div className="plus-wrap">
+              <button
+                className="plus"
+                onClick={() => setPickerOpen((v) => !v)}
+                title="Modes & tools"
+                aria-label="Open modes and tools"
+              >
+                +
+              </button>
+              <ModePicker
+                open={pickerOpen}
+                active={mode}
+                onPick={onModeChange}
+                onClose={() => setPickerOpen(false)}
+              />
+            </div>
+
+            {showModePill && (
+              <span className={`mode-pill mode-${mode}`}>
+                <span className="mode-pill-label">{MODE_LABEL[mode]}</span>
+                <button
+                  className="mode-pill-x"
+                  onClick={() => onModeChange("agent")}
+                  title="Switch back to Agent"
+                  aria-label="Clear mode"
+                >
+                  ×
+                </button>
+              </span>
+            )}
+
+            <div className="model-wrap" ref={modelRef}>
+              <button
+                className="model-btn"
+                onClick={() => setModelOpen((v) => !v)}
+                title="Switch model"
+              >
+                <span className="model-glyph">✱</span>
+                {currentModel}
+                <span className="caret">▾</span>
+              </button>
+              {modelOpen && (
+                <div className="model-menu" role="menu">
+                  {MODELS.map((m) => (
+                    <button
+                      key={m.id}
+                      className={`model-item${m.id === model ? " active" : ""}`}
+                      onClick={() => {
+                        onModelChange(m.id);
+                        setModelOpen(false);
+                      }}
+                    >
+                      {m.label}
+                      {m.id === model && <span className="mp-check">✓</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="right">
+            <button
+              className="mic"
+              disabled
+              title="Voice — coming soon"
+              aria-label="Voice input (coming soon)"
+            >
+              🎤
+            </button>
+            {running ? (
+              <button className="send-round stop" onClick={onStop} title="Stop">
+                ■
+              </button>
+            ) : (
+              <button
+                className="send-round"
+                onClick={submit}
+                disabled={!text.trim()}
+                title="Send (Enter)"
+                aria-label="Send"
+              >
+                ↑
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
