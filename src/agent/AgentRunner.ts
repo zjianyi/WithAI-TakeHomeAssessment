@@ -238,7 +238,7 @@ export class AgentRunner {
       env: {
         ...process.env,
         ANTHROPIC_API_KEY: apiKey,
-        CLAUDE_AGENT_SDK_CLIENT_APP: "claude-coder/0.0.3",
+        CLAUDE_AGENT_SDK_CLIENT_APP: "claude-coder/0.0.4",
       } as Record<string, string | undefined>,
       ...(systemPromptOverride
         ? { systemPrompt: systemPromptOverride }
@@ -313,8 +313,32 @@ export class AgentRunner {
           | undefined;
         if (usage) this.tokens.ingestUsage(usage);
 
+        // Track thinking block timing so we can surface "Thought for Xs".
+        let thinkingStartMs: number | null = null;
+
         for (const block of am.message.content) {
           const b = block as { type: string } & Record<string, unknown>;
+          if (b.type === "thinking" && typeof b.thinking === "string") {
+            // Start timer on first thinking block; accumulate if multiple.
+            if (thinkingStartMs === null) thinkingStartMs = Date.now();
+            const durationMs = Date.now() - thinkingStartMs;
+            this.provider.post({
+              type: "stream",
+              item: {
+                kind: "thinking",
+                id: id(),
+                messageId: am.message.id,
+                text: b.thinking as string,
+                durationMs,
+                parentToolUseId: parentId,
+              },
+            });
+          } else {
+            // Non-thinking block follows — reset the timer so subsequent
+            // text/tool_use blocks get fresh timing if more thinking comes.
+            thinkingStartMs = null;
+          }
+
           if (b.type === "text" && typeof b.text === "string" && b.text.length > 0) {
             this.provider.post({
               type: "stream",

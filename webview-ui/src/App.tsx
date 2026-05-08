@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { on, send } from "./lib/vscodeApi";
 import type {
   ApprovalRequestPayload,
@@ -8,12 +8,14 @@ import type {
   PermissionOverride,
   StreamItem,
 } from "../../src/util/messages";
+import { READ_ONLY_TOOL_NAMES } from "./util/toolSummary";
 import { Welcome } from "./components/Welcome";
 import { ToolUseBlock } from "./components/ToolUseBlock";
+import { ExploreGroup } from "./components/ExploreGroup";
+import { ThinkingBlock } from "./components/ThinkingBlock";
 import { ApprovalDialog } from "./components/ApprovalDialog";
 import { Markdown } from "./components/Markdown";
 import { Composer } from "./components/Composer";
-import { ContextBar } from "./components/ContextBar";
 import { SubagentWorkstream } from "./components/SubagentWorkstream";
 import { PlanPanel } from "./components/PlanPanel";
 import { PermissionsPanel } from "./components/PermissionsPanel";
@@ -36,10 +38,7 @@ type PlanView = "hidden" | "live" | "review";
 
 /**
  * Heuristic: an assistant turn is a "clarifying questions" turn if it starts
- * with `1.` and contains a `2.` early on. The PLAN_PROMPT explicitly asks for
- * exactly 2 numbered questions in the first turn before any plan is written,
- * so this is the simplest reliable signal we can use to keep questions in the
- * transcript while everything else lands in the PlanPanel.
+ * with `1.` and contains a `2.` early on.
  */
 function looksLikeQuestions(text: string): boolean {
   return /^\s*1\./.test(text) && /\n\s*2\./.test(text.slice(0, 800));
@@ -64,9 +63,30 @@ export function App() {
   const [permPanelOpen, setPermPanelOpen] = useState(false);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
 
+  // rAF batching refs — accumulate StreamItems between frames, flush together.
+  const pendingItems = useRef<AnyItem[]>([]);
+  const rafId = useRef<number | null>(null);
+
+  const flush = useCallback(() => {
+    rafId.current = null;
+    const batch = pendingItems.current;
+    pendingItems.current = [];
+    if (batch.length === 0) return;
+    setItems((prev) => [...prev, ...batch]);
+  }, []);
+
+  function pushItem(item: AnyItem) {
+    pendingItems.current.push(item);
+    if (rafId.current === null) {
+      rafId.current = requestAnimationFrame(flush);
+    }
+  }
+
+  // Flush on unmount.
+  useEffect(() => () => { if (rafId.current !== null) cancelAnimationFrame(rafId.current); }, [flush]);
+
   const collapsed = useMemo(() => collapse(items), [items]);
 
-  // Derive the per-run permission baseline from the workspace setting.
   const baseline: PermissionOverride =
     init.permissionMode === "acceptEdits" ? "acceptEdits" : "default";
 
@@ -90,14 +110,9 @@ export function App() {
       } else if (m.type === "stream") {
         if (m.item.kind === "result") {
           setLastResult({ cost: m.item.totalCostUsd, ms: m.item.durationMs });
-          // Plan-mode turn just finished. If we accumulated plan text (i.e. the
-          // text was NOT a clarifying-questions turn), flip the panel to review
-          // so the BuildDialog appears.
           setPlanView((prev) => (prev === "live" ? "review" : prev));
         }
         if (m.item.kind === "assistant_text" && m.item.mode === "plan") {
-          // Only treat *non-question* turns as plan content. Questions stay in
-          // the transcript so the user can read + answer them inline.
           const text = m.item.text;
           if (!looksLikeQuestions(text)) {
             setPlanContent((prev) => prev + text);
@@ -105,39 +120,40 @@ export function App() {
           }
         }
         if (m.item.kind === "user" && m.item.mode === "plan") {
-          // A new plan-mode user message starts a fresh plan stream. Reset
-          // accumulator + view (questions land in transcript first; plan text
-          // will start populating once the assistant moves past Q&A).
           setPlanContent("");
           setPlanView("hidden");
         }
-        setItems((prev) => [...prev, { kind: "stream", item: m.item }]);
+        pushItem({ kind: "stream", item: m.item });
       } else if (m.type === "running") {
         setRunning(m.running);
       } else if (m.type === "approval-request") {
-        setItems((prev) => [...prev, { kind: "approval", payload: m.payload }]);
+        pushItem({ kind: "approval", payload: m.payload });
       } else if (m.type === "approval-cancelled") {
         setItems((prev) => prev.filter((x) => !(x.kind === "approval" && x.payload.id === m.id)));
       } else if (m.type === "session") {
         setInit((s) => ({ ...s, sessionId: m.sessionId }));
       } else if (m.type === "transcriptCleared") {
+        // Flush any pending batch first so it doesn't land after the clear.
+        if (rafId.current !== null) {
+          cancelAnimationFrame(rafId.current);
+          rafId.current = null;
+          pendingItems.current = [];
+        }
         setItems([]);
         setLastResult(null);
         setUsage(null);
         setPlanContent("");
         setPlanView("hidden");
       } else if (m.type === "info") {
-        setItems((prev) => [
-          ...prev,
-          { kind: "stream", item: { kind: "system", id: `i_${Date.now()}`, text: m.text } },
-        ]);
+        pushItem({
+          kind: "stream",
+          item: { kind: "system", id: `i_${Date.now()}`, text: m.text },
+        });
       } else if (m.type === "contextUsage") {
         setUsage(m.usage);
       } else if (m.type === "modeChanged") {
         setInit((s) => ({ ...s, mode: m.mode }));
         if (m.mode !== "plan") {
-          // Leaving plan mode: drop any accumulated plan content so the
-          // floating "Open plan view" button doesn't linger across modes.
           setPlanContent("");
           setPlanView("hidden");
         }
@@ -151,6 +167,7 @@ export function App() {
     });
     send({ type: "webviewReady" });
     return off;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -299,9 +316,6 @@ export function App() {
         <div className="transcript" ref={transcriptRef}>
           {items.length === 0 && <Welcome hasApiKey={init.hasApiKey} />}
           {renderEntries(collapsed)}
-          {/* Only surface the "Open plan view" reopener while we're actually in
-              plan mode and a run isn't streaming — otherwise it persists across
-              modes and feels like a regression. */}
           {init.mode === "plan" && planContent && !running && (
             <button
               className="plan-resume"
@@ -321,8 +335,6 @@ export function App() {
         onSave={(b) => send({ type: "setPermissionBaseline", baseline: b })}
       />
 
-      <ContextBar usage={usage} />
-
       <Composer
         running={running}
         mode={init.mode}
@@ -339,10 +351,13 @@ export function App() {
         onStop={() => send({ type: "stop" })}
         onSlash={handleSlash}
         permissionBaseline={baseline}
+        usage={usage}
       />
     </div>
   );
 }
+
+// ─── Collapsed transcript types ───────────────────────────────────────────────
 
 export type CollapsedEntry =
   | { kind: "user"; id: string; text: string; mode?: Mode }
@@ -356,6 +371,20 @@ export type CollapsedEntry =
       result?: { content: unknown; isError?: boolean };
       parentToolUseId?: string | null;
     }
+  | {
+      /** A cluster of consecutive read-only tool calls. */
+      kind: "explore_group";
+      id: string;
+      tools: {
+        id: string;
+        toolUseId: string;
+        name: string;
+        input: Record<string, unknown>;
+        result?: { content: unknown; isError?: boolean };
+      }[];
+      parentToolUseId?: string | null;
+    }
+  | { kind: "thinking"; id: string; text: string; durationMs?: number }
   | { kind: "system"; id: string; text: string }
   | { kind: "error"; id: string; text: string }
   | {
@@ -371,15 +400,29 @@ export type CollapsedEntry =
 function collapse(items: AnyItem[]): CollapsedEntry[] {
   const out: CollapsedEntry[] = [];
   const toolByUseId = new Map<string, CollapsedEntry & { kind: "tool" }>();
+  // Track the last explore_group entry so we can append matching tool_results.
+  let currentGroup: (CollapsedEntry & { kind: "explore_group" }) | null = null;
+
+  function closeGroup() {
+    if (currentGroup) {
+      out.push(currentGroup);
+      currentGroup = null;
+    }
+  }
 
   for (const it of items) {
     if (it.kind === "approval") {
+      closeGroup();
       out.push({ kind: "approval", payload: it.payload });
       continue;
     }
     const m = it.item;
-    if (m.kind === "user") out.push({ kind: "user", id: m.id, text: m.text, mode: m.mode });
-    else if (m.kind === "assistant_text") {
+
+    if (m.kind === "user") {
+      closeGroup();
+      out.push({ kind: "user", id: m.id, text: m.text, mode: m.mode });
+    } else if (m.kind === "assistant_text") {
+      closeGroup();
       const last = out[out.length - 1];
       if (
         last &&
@@ -395,33 +438,83 @@ function collapse(items: AnyItem[]): CollapsedEntry[] {
           parentToolUseId: m.parentToolUseId ?? null,
         });
       }
+    } else if (m.kind === "thinking") {
+      closeGroup();
+      out.push({ kind: "thinking", id: m.id, text: m.text, durationMs: m.durationMs });
     } else if (m.kind === "tool_use") {
-      const e: CollapsedEntry = {
-        kind: "tool",
-        id: m.id,
-        toolUseId: m.toolUseId,
-        name: m.name,
-        input: m.input,
-        parentToolUseId: m.parentToolUseId ?? null,
-      };
-      toolByUseId.set(m.toolUseId, e as CollapsedEntry & { kind: "tool" });
-      out.push(e);
-    } else if (m.kind === "tool_result") {
-      const t = toolByUseId.get(m.toolUseId);
-      if (t) t.result = { content: m.content, isError: m.isError };
-      else
-        out.push({
+      const isReadOnly = READ_ONLY_TOOL_NAMES.has(m.name);
+      const parentId = m.parentToolUseId ?? null;
+
+      if (isReadOnly) {
+        // If there's an active group for the same parent, append; otherwise start one.
+        if (!currentGroup || (currentGroup.parentToolUseId ?? null) !== parentId) {
+          closeGroup();
+          currentGroup = {
+            kind: "explore_group",
+            id: m.id,
+            tools: [],
+            parentToolUseId: parentId,
+          };
+        }
+        const entry = {
+          id: m.id,
+          toolUseId: m.toolUseId,
+          name: m.name,
+          input: m.input,
+        };
+        currentGroup.tools.push(entry);
+        // Register so tool_result can hydrate it.
+        toolByUseId.set(m.toolUseId, {
           kind: "tool",
           id: m.id,
           toolUseId: m.toolUseId,
-          name: "tool",
-          input: {},
-          result: { content: m.content, isError: m.isError },
-          parentToolUseId: m.parentToolUseId ?? null,
+          name: m.name,
+          input: m.input,
+          parentToolUseId: parentId,
         });
-    } else if (m.kind === "system") out.push({ kind: "system", id: m.id, text: m.text });
-    else if (m.kind === "error") out.push({ kind: "error", id: m.id, text: m.text });
-    else if (m.kind === "result")
+      } else {
+        closeGroup();
+        const e: CollapsedEntry = {
+          kind: "tool",
+          id: m.id,
+          toolUseId: m.toolUseId,
+          name: m.name,
+          input: m.input,
+          parentToolUseId: parentId,
+        };
+        toolByUseId.set(m.toolUseId, e as CollapsedEntry & { kind: "tool" });
+        out.push(e);
+      }
+    } else if (m.kind === "tool_result") {
+      // Find the matching entry in either the current group's tools or out[].
+      const inGroup = currentGroup?.tools.find((t) => t.toolUseId === m.toolUseId);
+      if (inGroup) {
+        inGroup.result = { content: m.content, isError: m.isError };
+      } else {
+        const t = toolByUseId.get(m.toolUseId);
+        if (t) {
+          t.result = { content: m.content, isError: m.isError };
+        } else {
+          closeGroup();
+          out.push({
+            kind: "tool",
+            id: m.id,
+            toolUseId: m.toolUseId,
+            name: "tool",
+            input: {},
+            result: { content: m.content, isError: m.isError },
+            parentToolUseId: m.parentToolUseId ?? null,
+          });
+        }
+      }
+    } else if (m.kind === "system") {
+      closeGroup();
+      out.push({ kind: "system", id: m.id, text: m.text });
+    } else if (m.kind === "error") {
+      closeGroup();
+      out.push({ kind: "error", id: m.id, text: m.text });
+    } else if (m.kind === "result") {
+      closeGroup();
       out.push({
         kind: "result",
         id: m.id,
@@ -430,7 +523,10 @@ function collapse(items: AnyItem[]): CollapsedEntry[] {
         cost: m.totalCostUsd,
         ms: m.durationMs,
       });
+    }
   }
+  // Flush any trailing group.
+  closeGroup();
   return out;
 }
 
@@ -440,6 +536,7 @@ function renderEntries(entries: CollapsedEntry[]): React.ReactNode[] {
     let parent: string | null = null;
     if (e.kind === "assistant") parent = e.parentToolUseId ?? null;
     else if (e.kind === "tool") parent = e.parentToolUseId ?? null;
+    else if (e.kind === "explore_group") parent = e.parentToolUseId ?? null;
     if (parent) {
       if (!childrenByParent.has(parent)) childrenByParent.set(parent, []);
       childrenByParent.get(parent)!.push(e);
@@ -450,7 +547,8 @@ function renderEntries(entries: CollapsedEntry[]): React.ReactNode[] {
   for (const e of entries) {
     if (
       (e.kind === "assistant" && (e.parentToolUseId ?? null)) ||
-      (e.kind === "tool" && (e.parentToolUseId ?? null))
+      (e.kind === "tool" && (e.parentToolUseId ?? null)) ||
+      (e.kind === "explore_group" && (e.parentToolUseId ?? null))
     ) {
       continue;
     }
@@ -492,6 +590,14 @@ export function renderEntry(e: CollapsedEntry): React.ReactNode {
           <span className="bullet">●</span>
           <Markdown text={e.text} />
         </div>
+      );
+    case "thinking":
+      return (
+        <ThinkingBlock key={e.id} text={e.text} durationMs={e.durationMs} />
+      );
+    case "explore_group":
+      return (
+        <ExploreGroup key={e.id} tools={e.tools} />
       );
     case "tool":
       return (

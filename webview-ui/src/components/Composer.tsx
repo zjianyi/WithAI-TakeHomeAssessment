@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { send, on } from "../lib/vscodeApi";
-import type { Mode, PermissionOverride, WorkspaceFile } from "../../../src/util/messages";
+import type { ContextUsage, Mode, PermissionOverride, WorkspaceFile } from "../../../src/util/messages";
 import { MentionPopup } from "./MentionPopup";
 import { ModePicker, MODE_LABEL } from "./ModePicker";
-import { PermPill } from "./PermPill";
 
 type SlashCmd = { name: string; desc: string };
 const SLASH_COMMANDS: SlashCmd[] = [
@@ -31,8 +30,10 @@ type Props = {
   onModeChange: (m: Mode) => void;
   model: string;
   onModelChange: (m: string) => void;
-  /** The workspace baseline (informs the pill's "overridden" highlight). */
+  /** The workspace baseline (informs PermissionOverride default in menu). */
   permissionBaseline: PermissionOverride;
+  /** Live context usage for the context meter inside the + menu. */
+  usage?: ContextUsage | null;
 };
 
 type Trigger =
@@ -50,6 +51,7 @@ export function Composer({
   model,
   onModelChange,
   permissionBaseline,
+  usage,
 }: Props) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
@@ -265,16 +267,20 @@ export function Composer({
               <button
                 className="plus"
                 onClick={() => setPickerOpen((v) => !v)}
-                title="Modes & tools"
+                title="Modes, permissions & context"
                 aria-label="Open modes and tools"
               >
                 +
               </button>
+              {/* ModePicker now hosts Modes + Permissions + Context + More */}
               <ModePicker
                 open={pickerOpen}
                 active={mode}
                 onPick={onModeChange}
                 onClose={() => setPickerOpen(false)}
+                permLevel={permLevel}
+                onPermChange={setPermLevel}
+                usage={usage}
               />
             </div>
 
@@ -291,12 +297,6 @@ export function Composer({
                 </button>
               </span>
             )}
-
-            <PermPill
-              level={permLevel}
-              baseline={permissionBaseline}
-              onChange={setPermLevel}
-            />
 
             <div className="model-wrap" ref={modelRef}>
               <button

@@ -26,7 +26,7 @@
   --permission: #b1b9f9;
   --bash: #fd5db1;
   --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --sans: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --radius: 10px;
 }
 
@@ -38,8 +38,8 @@ html, body, #root {
   background: var(--bg);
   color: var(--fg);
   font-family: var(--sans);
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 13.5px;
+  line-height: 1.55;
 }
 
 a { color: var(--accent); text-decoration: none; }
@@ -147,7 +147,7 @@ button { font: inherit; }
 .msg.user .bubble {
   background: var(--bg-user);
   border-radius: 10px;
-  padding: 9px 12px;
+  padding: 9px 14px;
   white-space: pre-wrap;
   word-wrap: break-word;
 }
@@ -186,16 +186,24 @@ button { font: inherit; }
   padding: 8px 10px;
   overflow-x: auto;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  font-feature-settings: "calt", "liga";
 }
 .msg.assistant .body code {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 12.5px;
   background: var(--bg-elev);
   padding: 1px 4px;
   border-radius: 3px;
 }
 .msg.assistant .body pre code { background: transparent; padding: 0; }
+.msg.assistant .body h1 { font-size: 15px; font-weight: 700; margin: 10px 0 4px 0; }
+.msg.assistant .body h2 { font-size: 14px; font-weight: 600; margin: 8px 0 4px 0; }
+.msg.assistant .body h3 { font-size: 13px; font-weight: 600; margin: 6px 0 3px 0; }
+.msg.assistant .body h4,
+.msg.assistant .body h5,
+.msg.assistant .body h6 { font-size: 13px; font-weight: 500; margin: 4px 0 2px 0; }
 
 .msg.system {
   font-family: var(--mono);
@@ -1023,3 +1031,251 @@ button { font: inherit; }
   cursor: pointer;
 }
 .perm-save:hover { background: var(--accent-shimmer); }
+
+/* === BashBlock === */
+.bashblock {
+  margin: 6px 0;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--bash);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  font-family: var(--mono);
+  overflow: hidden;
+}
+.bashblock.error { border-left-color: var(--err); }
+.bashblock-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(0,0,0,0.18);
+  border-bottom: 1px solid var(--border-soft);
+}
+.bashblock-icon { color: var(--bash); font-size: 11px; }
+.bashblock-label { color: var(--bash); font-weight: 600; font-size: 12px; }
+.bashblock-desc { color: var(--muted); font-size: 11px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bashblock-mirror {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+.bashblock-mirror:hover { color: var(--accent); border-color: var(--accent-soft); background: var(--accent-soft); }
+.bashblock-cmd {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-break: break-all;
+  border-bottom: 1px solid var(--border-soft);
+  background: rgba(0,0,0,0.10);
+}
+.bashblock-prompt { color: var(--accent); margin-right: 6px; }
+.bashblock-out {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 280px;
+  overflow-y: auto;
+  line-height: 1.45;
+}
+.bashblock-empty { padding: 6px 10px; color: var(--subtle); font-size: 11.5px; font-style: italic; }
+.bashblock-running {
+  padding: 6px 10px;
+  color: var(--accent-shimmer);
+  font-size: 12px;
+  animation: pulse 1.4s infinite;
+}
+.bashblock-spin { margin-right: 4px; }
+.bashblock-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px;
+  border-top: 1px solid var(--border-soft);
+  background: rgba(0,0,0,0.12);
+  font-size: 11px;
+}
+.bashblock-exit.ok { color: var(--ok); }
+.bashblock-exit.err { color: var(--err); }
+.bashblock-meta { color: var(--subtle); }
+.bashblock-toggle {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-family: var(--mono);
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.bashblock-toggle:hover { color: var(--fg); background: var(--bg-elev-2); }
+
+/* === ExploreGroup (collapsible read-only tool cluster) === */
+.explore-group {
+  margin: 4px 0;
+  font-family: var(--mono);
+}
+.explore-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 3px 2px;
+  text-align: left;
+  width: 100%;
+  border-radius: 4px;
+}
+.explore-group-header:hover { color: var(--fg); background: var(--bg-elev); }
+.explore-icon { color: var(--subtle); font-size: 10px; }
+.explore-label { flex: 1; }
+.explore-chev { color: var(--subtle); font-size: 10px; }
+.explore-group-body {
+  padding: 2px 0 2px 18px;
+  border-left: 2px solid var(--border-soft);
+  margin-left: 8px;
+  margin-top: 2px;
+}
+.explore-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 4px;
+  font-size: 11.5px;
+  color: var(--subtle);
+  line-height: 1.45;
+}
+.explore-tool-name {
+  color: var(--muted);
+  min-width: 46px;
+  font-size: 11px;
+}
+.explore-tool-summary { flex: 1; color: var(--subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.explore-tool-err { color: var(--err); font-size: 10px; }
+
+/* === ThinkingBlock === */
+.thinking-block {
+  margin: 4px 0;
+  font-family: var(--mono);
+}
+.thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: var(--subtle);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 3px 2px;
+  text-align: left;
+  width: 100%;
+  border-radius: 4px;
+}
+.thinking-header:hover { color: var(--muted); background: var(--bg-elev); }
+.thinking-icon { font-size: 11px; }
+.thinking-label { flex: 1; font-style: italic; }
+.thinking-chev { color: var(--subtle); font-size: 10px; }
+.thinking-body {
+  margin-left: 22px;
+  margin-top: 4px;
+  border-left: 2px solid var(--border-soft);
+  padding-left: 10px;
+}
+.thinking-text {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--subtle);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  font-family: var(--sans);
+  font-style: italic;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+/* === Result preview toggle === */
+.preview-toggle {
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 4px;
+  display: block;
+}
+.preview-toggle:hover { color: var(--fg); border-color: var(--border); background: var(--bg-elev-2); }
+
+/* === Diff toggle button inside tool header === */
+.diff-toggle-btn {
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.diff-toggle-btn:hover { color: var(--fg); border-color: var(--border); background: var(--bg-elev-2); }
+
+/* === ModePicker section labels + context meter === */
+.modepicker-section-label {
+  font-size: 10.5px;
+  color: var(--subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  padding: 6px 10px 3px 10px;
+}
+.modepicker-ctx {
+  padding: 4px 10px 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.mp-ctx-track {
+  height: 5px;
+  background: var(--bg-elev-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.mp-ctx-fill {
+  height: 100%;
+  background: var(--ok);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+.mp-ctx-fill.mp-ctx-warn { background: var(--warn); }
+.mp-ctx-fill.mp-ctx-err { background: var(--err); }
+.mp-ctx-text {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.mp-ctx-pct { color: var(--subtle); }
+.mp-ctx-sub {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--subtle);
+}
