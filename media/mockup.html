@@ -1,0 +1,325 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Claude Coder · Cursor-style modes</title>
+<style>
+:root {
+  --bg: #1a1a1a;
+  --bg-elev: #232323;
+  --bg-elev-2: #2b2b2b;
+  --bg-elev-3: #2f2f2f;
+  --bg-user: #373737;
+  --border: #3a3a3a;
+  --border-soft: #2e2e2e;
+  --fg: #e6e6e6;
+  --fg-strong: #f1f1f1;
+  --muted: #999999;
+  --subtle: #6a6a6a;
+  --accent: #d77757;
+  --accent-soft: rgba(215, 119, 87, 0.18);
+  --accent-shimmer: #eb9f7f;
+  --ok: #4eba65;
+  --warn: #ffc107;
+  --err: #ff6b80;
+  --plan: #48968c;
+  --diff-add-bg: rgba(56, 166, 96, 0.18);
+  --diff-add-fg: #b8e7c5;
+  --diff-del-bg: rgba(179, 89, 107, 0.22);
+  --diff-del-fg: #f1b9c4;
+  --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: #0d0d0d; font-family: var(--sans); }
+.frame {
+  width: 1100px;
+  height: 880px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #444;
+}
+/* Header */
+.miniheader {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  font-size: 12px; color: var(--muted);
+  border-bottom: 1px solid var(--border-soft);
+}
+.brand { color: var(--fg-strong); font-weight: 600; }
+.brand .mark { color: var(--accent); margin-right: 4px; }
+.session { font-family: var(--mono); font-size: 11px; color: var(--subtle); }
+.spacer { flex: 1; }
+.iconbtn {
+  background: transparent; border: 1px solid transparent;
+  color: var(--muted); padding: 3px 8px; border-radius: 6px; font-size: 12px;
+}
+
+/* Transcript */
+.transcript {
+  flex: 1; padding: 14px 14px 6px 14px; overflow-y: hidden;
+}
+.msg { margin: 10px 0; }
+.msg .label { display: inline-block; font-family: var(--mono); font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+.msg.user .label::before { content: "❯ "; color: var(--accent); }
+.msg.user .bubble {
+  background: var(--bg-user); border-radius: 10px; padding: 9px 12px; max-width: 88%;
+}
+.msg.user .mode-tag {
+  margin-left: 6px; font-size: 10px; color: var(--accent);
+  background: var(--accent-soft); padding: 1px 6px; border-radius: 4px; font-weight: 600;
+}
+.msg.assistant { padding-left: 4px; }
+.msg.assistant .bullet { color: var(--accent); margin-right: 6px; display: inline-block; width: 10px; }
+.msg.system { font-family: var(--mono); font-size: 11.5px; color: var(--subtle); padding-left: 4px; }
+.msg.system .glyph { color: var(--muted); margin-right: 6px; }
+
+.tool {
+  margin: 6px 0; border-left: 2px solid var(--accent); padding: 4px 0 4px 10px;
+  font-family: var(--mono); font-size: 12px;
+}
+.tool .header { display: flex; align-items: center; gap: 6px; }
+.tool .header .glyph { color: var(--accent); }
+.tool .header .name { color: var(--fg); }
+.tool .header .args { color: var(--muted); }
+
+.workstream {
+  margin: 8px 0; border-left: 2px solid var(--plan); padding: 4px 0 4px 10px;
+}
+.workstream-header {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 12px; color: var(--plan);
+}
+.workstream-header .ws-name { color: var(--fg); font-weight: 600; }
+.workstream-header .ws-status.done { color: var(--ok); margin-left: auto; }
+.workstream-header .ws-status.running {
+  color: var(--accent-shimmer); margin-left: auto;
+}
+.workstream-body {
+  margin-top: 4px; padding: 4px 0 4px 10px; border-left: 1px dashed var(--border-soft);
+}
+
+/* Approval */
+.approval {
+  margin: 8px 0; border: 1px solid var(--accent); border-radius: 10px;
+  background: var(--bg-elev); padding: 10px 12px;
+}
+.approval .title {
+  font-weight: 600; color: var(--accent);
+  font-family: var(--mono); font-size: 12.5px; margin-bottom: 4px;
+}
+.approval .subtitle { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+.approval .diff {
+  font-family: var(--mono); font-size: 11.5px; background: #111;
+  border: 1px solid var(--border-soft); border-radius: 6px; padding: 6px 8px;
+  margin: 4px 0;
+}
+.approval .diff .row { display: block; padding: 0 4px; white-space: pre; }
+.approval .diff .row.add { background: var(--diff-add-bg); color: var(--diff-add-fg); }
+.approval .diff .row.del { background: var(--diff-del-bg); color: var(--diff-del-fg); }
+.approval .diff .row.meta { color: var(--subtle); }
+.approval .row { display: flex; gap: 8px; margin-top: 8px; }
+.approval button {
+  border: 1px solid var(--border); background: var(--bg-elev-2);
+  color: var(--fg); padding: 5px 10px; border-radius: 6px; font-size: 12px;
+}
+.approval button.allow { background: var(--accent); color: #1a1a1a; border-color: var(--accent); font-weight: 600; }
+
+/* Result line */
+.result {
+  margin-top: 10px; padding: 6px 0; color: var(--muted);
+  font-family: var(--mono); font-size: 11px; display: flex; gap: 12px;
+  border-top: 1px dashed var(--border-soft);
+}
+.result .ok { color: var(--ok); }
+
+/* Context bar */
+.ctxbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 12px 6px 12px;
+  font-size: 10.5px; font-family: var(--mono);
+  color: var(--subtle);
+  border-top: 1px solid var(--border-soft);
+}
+.ctx-label { text-transform: uppercase; letter-spacing: 0.6px; }
+.ctx-track {
+  flex: 1; height: 4px; background: var(--bg-elev-2);
+  border-radius: 999px; overflow: hidden;
+}
+.ctx-fill { height: 100%; background: var(--ok); width: 24%; }
+
+/* Composer */
+.composer { padding: 6px 10px 12px 10px; }
+.composer-shell {
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.composer-textarea {
+  background: transparent; padding: 12px 14px 8px 14px;
+  color: var(--subtle); font-size: 13px;
+}
+.composer-controls {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 8px; gap: 6px;
+}
+.composer-controls .left { display: flex; align-items: center; gap: 6px; }
+.plus {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--fg); font-size: 16px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.mode-pill {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 3px 4px 3px 8px; border-radius: 6px;
+  background: var(--bg-elev-2); border: 1px solid var(--border);
+  font-size: 12px; color: var(--accent); font-weight: 500;
+}
+.mode-pill::before { content: "▤"; margin-right: 6px; font-size: 10px; }
+.mode-pill .x {
+  margin-left: 4px; color: var(--muted); padding: 0 4px;
+  font-size: 14px; line-height: 1; border-radius: 4px;
+}
+.model-btn {
+  background: transparent; border: none; color: var(--muted);
+  font-size: 12px; padding: 3px 6px; border-radius: 6px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.model-btn .model-glyph { color: var(--accent); font-size: 11px; }
+.model-btn .caret { color: var(--subtle); font-size: 9px; }
+.composer-controls .right { display: flex; align-items: center; gap: 4px; }
+.mic { color: var(--subtle); font-size: 14px; padding: 4px 6px; opacity: 0.6; }
+.send-round {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--accent); color: #1a1a1a;
+  font-size: 14px; line-height: 1; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+</style>
+</head>
+<body>
+<div class="frame">
+  <div class="miniheader">
+    <span class="brand"><span class="mark">●</span>Claude Coder</span>
+    <span class="session">session 5cd7034e</span>
+    <span class="spacer"></span>
+    <span class="iconbtn">＋ new</span>
+  </div>
+
+  <div class="transcript">
+    <div class="msg system"><span class="glyph">∴</span>Loaded CLAUDE.md (2.1 KB), AGENTS.md (1.4 KB)</div>
+    <div class="msg system"><span class="glyph">∴</span>Session 5cd7034e · claude-sonnet-4-5 · multitask mode</div>
+
+    <div class="msg user">
+      <div class="label">you<span class="mode-tag">multitask</span></div>
+      <div class="bubble">Add input validation to <code>add(a,b)</code> in <code>demo.js</code> AND a <code>sub(a,b)</code> with the same checks in <code>two.js</code>. They're independent — split them up.</div>
+    </div>
+
+    <div class="msg assistant">
+      <span class="bullet">●</span>I'll dispatch two workers in parallel — one per file.
+    </div>
+
+    <div class="workstream">
+      <div class="workstream-header">
+        <span class="ws-chev">▾</span>
+        <span class="ws-name">subagent · worker</span>
+        <span style="color:var(--muted);font-size:11px;">· validate add(a,b) in demo.js</span>
+        <span class="ws-status done">done</span>
+      </div>
+      <div class="workstream-body">
+        <div class="tool">
+          <div class="header">
+            <span class="glyph">●</span>
+            <span class="name">Read</span>
+            <span class="args">(demo.js)</span>
+          </div>
+        </div>
+        <div class="tool">
+          <div class="header">
+            <span class="glyph">●</span>
+            <span class="name">Edit</span>
+            <span class="args">(demo.js)</span>
+          </div>
+        </div>
+        <div class="msg assistant" style="padding-left: 0;">
+          <span class="bullet">●</span>Wrapped <code>add</code> with type-checks; throws on non-finite.
+        </div>
+      </div>
+    </div>
+
+    <div class="workstream">
+      <div class="workstream-header">
+        <span class="ws-chev">▾</span>
+        <span class="ws-name">subagent · worker</span>
+        <span style="color:var(--muted);font-size:11px;">· validate sub(a,b) in two.js</span>
+        <span class="ws-status running">running…</span>
+      </div>
+      <div class="workstream-body">
+        <div class="tool">
+          <div class="header">
+            <span class="glyph">●</span>
+            <span class="name">Read</span>
+            <span class="args">(two.js)</span>
+          </div>
+        </div>
+        <div class="approval">
+          <div class="title">● Edit — approval needed</div>
+          <div class="subtitle">Claude wants to update two.js · two.js</div>
+          <div class="diff">
+            <span class="row meta">--- two.js     current</span>
+            <span class="row meta">+++ two.js     proposed</span>
+            <span class="row meta">@@ -1,2 +1,5 @@</span>
+            <span class="row">// TODO: implement sub</span>
+            <span class="row del">-export function sub(a, b) { return 0; }</span>
+            <span class="row add">+export function sub(a, b) {</span>
+            <span class="row add">+  if (!Number.isFinite(a) || !Number.isFinite(b)) throw new Error("invalid");</span>
+            <span class="row add">+  return a - b;</span>
+            <span class="row add">+}</span>
+          </div>
+          <div class="row">
+            <button class="allow">Allow once</button>
+            <button>Deny…</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="result">
+      <span class="ok">✓ done</span>
+      <span>cost $0.1217</span>
+      <span>20393ms</span>
+    </div>
+  </div>
+
+  <div class="ctxbar">
+    <span class="ctx-label">context</span>
+    <div class="ctx-track"><div class="ctx-fill"></div></div>
+    <span style="color: var(--muted);">47.2k / 200k <span style="color: var(--subtle);">(24%)</span></span>
+  </div>
+
+  <div class="composer">
+    <div class="composer-shell">
+      <div class="composer-textarea">Ask Claude to edit…</div>
+      <div class="composer-controls">
+        <div class="left">
+          <span class="plus">+</span>
+          <span class="mode-pill">Multitask<span class="x">×</span></span>
+          <span class="model-btn">
+            <span class="model-glyph">✱</span> Sonnet 4.5
+            <span class="caret">▾</span>
+          </span>
+        </div>
+        <div class="right">
+          <span class="mic">🎤</span>
+          <span class="send-round">↑</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

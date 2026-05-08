@@ -25,8 +25,9 @@ export function Welcome({ hasApiKey }: { hasApiKey: boolean }) {
           <ul>
             <li>Ask me to <code>implement</code>, <code>refactor</code>, or <code>debug</code> code.</li>
             <li>Reference files with <code>@filename</code>.</li>
-            <li>Try slash commands: <code>/help</code>, <code>/clear</code>, <code>/new</code>, <code>/cost</code>, <code>/model</code>, <code>/resume</code>.</li>
-            <li>I'll ask before touching files or running commands.</li>
+            <li>Tap <code>+</code> to switch mode: <code>Plan</code> · <code>Debug</code> · <code>Multitask</code> · <code>Ask</code> · <code>Agent</code>.</li>
+            <li>Try slash commands: <code>/help</code>, <code>/clear</code>, <code>/new</code>, <code>/cost</code>, <code>/model</code>.</li>
+            <li>Drop a <code>CLAUDE.md</code> or <code>AGENTS.md</code> in your repo and I'll read it on every turn.</li>
           </ul>
         </>
       )}

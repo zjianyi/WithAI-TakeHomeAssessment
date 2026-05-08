@@ -1,8 +1,8 @@
 {
   "name": "claude-coder",
   "displayName": "Claude Coder",
-  "description": "Agentic coding in VS Code, powered by the Claude Agent SDK.",
-  "version": "0.0.1",
+  "description": "Agentic coding in VS Code with Cursor-style mode switching, parallel subagents, and context tracking — powered by the Claude Agent SDK.",
+  "version": "0.0.2",
   "publisher": "withai",
   "repository": {
     "type": "git",
