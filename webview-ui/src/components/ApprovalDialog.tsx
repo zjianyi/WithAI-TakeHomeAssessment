@@ -3,14 +3,29 @@ import type { ApprovalRequestPayload } from "../../../src/util/messages";
 import { send } from "../lib/vscodeApi";
 import { DiffPreview } from "./DiffPreview";
 
-export function ApprovalDialog({ payload }: { payload: ApprovalRequestPayload }) {
+export function ApprovalDialog({
+  payload,
+  onResolved,
+}: {
+  payload: ApprovalRequestPayload;
+  /** Called after the user submits allow/deny so the card can leave the transcript. */
+  onResolved?: () => void;
+}) {
   const [denying, setDenying] = useState(false);
   const [reason, setReason] = useState("");
 
-  const allow = () =>
+  const allow = () => {
     send({ type: "approval-response", id: payload.id, result: { behavior: "allow" } });
-  const deny = (msg: string) =>
-    send({ type: "approval-response", id: payload.id, result: { behavior: "deny", message: msg } });
+    onResolved?.();
+  };
+  const deny = (msg: string) => {
+    send({
+      type: "approval-response",
+      id: payload.id,
+      result: { behavior: "deny", message: msg },
+    });
+    onResolved?.();
+  };
 
   const isBash = payload.toolName === "Bash";
   const isEditish = payload.toolName === "Edit" || payload.toolName === "Write" || payload.toolName === "MultiEdit";

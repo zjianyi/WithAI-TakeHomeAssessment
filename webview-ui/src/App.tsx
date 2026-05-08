@@ -107,6 +107,10 @@ export function App() {
     allowedTools: init.allowedTools,
   };
 
+  const dismissApproval = useCallback((id: string) => {
+    setItems((prev) => prev.filter((x) => !(x.kind === "approval" && x.payload.id === id)));
+  }, []);
+
   useEffect(() => {
     const off = on((m) => {
       if (m.type === "init") {
@@ -274,7 +278,7 @@ export function App() {
       ) : (
         <div className="transcript" ref={transcriptRef}>
           {items.length === 0 && <Welcome hasApiKey={init.hasApiKey} />}
-          {renderEntries(collapsed)}
+          {renderEntries(collapsed, dismissApproval)}
           {init.mode === "plan" && planContent && !running && (
             <button
               className="plan-resume"
@@ -534,7 +538,11 @@ function collapse(items: AnyItem[]): CollapsedEntry[] {
   return out;
 }
 
-function renderEntries(entries: CollapsedEntry[]): React.ReactNode[] {
+function renderEntries(
+  entries: CollapsedEntry[],
+  onDismissApproval?: (id: string) => void,
+): React.ReactNode[] {
+  const re = (e: CollapsedEntry) => renderEntry(e, onDismissApproval);
   const childrenByParent = new Map<string, CollapsedEntry[]>();
   for (const e of entries) {
     let parent: string | null = null;
@@ -564,17 +572,17 @@ function renderEntries(entries: CollapsedEntry[]): React.ReactNode[] {
           key={e.id}
           parentTool={e}
           entries={kids}
-          renderEntry={renderEntry}
+          renderEntry={re}
         />,
       );
       continue;
     }
-    nodes.push(renderEntry(e));
+    nodes.push(re(e));
   }
   return nodes;
 }
 
-export function renderEntry(e: CollapsedEntry): React.ReactNode {
+export function renderEntry(e: CollapsedEntry, onDismissApproval?: (id: string) => void): React.ReactNode {
   switch (e.kind) {
     case "user":
       return (
@@ -632,6 +640,12 @@ export function renderEntry(e: CollapsedEntry): React.ReactNode {
         </div>
       );
     case "approval":
-      return <ApprovalDialog key={e.payload.id} payload={e.payload} />;
+      return (
+        <ApprovalDialog
+          key={e.payload.id}
+          payload={e.payload}
+          onResolved={() => onDismissApproval?.(e.payload.id)}
+        />
+      );
   }
 }
