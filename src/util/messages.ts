@@ -67,6 +67,19 @@ export type StreamItem =
       isError?: boolean;
       parentToolUseId?: string | null;
     }
+  | {
+      /**
+       * Extended-thinking block from the Agent SDK. Cursor surfaces these as a
+       * collapsible "Thought for Xs ▾" row; we mirror that UX when the active
+       * model emits thinking content.
+       */
+      kind: "thinking";
+      id: string;
+      messageId?: string;
+      text: string;
+      durationMs?: number;
+      parentToolUseId?: string | null;
+    }
   | { kind: "system"; id: string; text: string }
   | { kind: "error"; id: string; text: string }
   | {
@@ -132,4 +145,12 @@ export type WebviewToExtMessage =
       followUp?: string;
     }
   | { type: "openPlanInEditor"; content: string }
-  | { type: "setPermissionBaseline"; baseline: PermissionBaseline };
+  | { type: "setPermissionBaseline"; baseline: PermissionBaseline }
+  | {
+      /**
+       * Open a real VS Code terminal pre-filled with this command so the user
+       * can re-run / edit / inspect what the agent's Bash tool just executed.
+       */
+      type: "mirrorToTerminal";
+      command: string;
+    };

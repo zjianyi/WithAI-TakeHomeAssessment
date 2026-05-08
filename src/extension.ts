@@ -66,13 +66,21 @@ export function activate(context: vscode.ExtensionContext): void {
         if (typeof content === "string" && content.length > 0) {
           planDocProvider.setContent(content);
         }
+        // Prime the document so VS Code recognizes the URI before previewing.
         const doc = await vscode.workspace.openTextDocument(PLAN_URI);
         await vscode.languages.setTextDocumentLanguage(doc, "markdown");
-        await vscode.window.showTextDocument(doc, {
-          viewColumn: vscode.ViewColumn.Beside,
-          preview: false,
-          preserveFocus: false,
-        });
+        // Render as a markdown preview pane (themed, headings styled, code highlighted)
+        // rather than dropping the user into raw markdown source.
+        try {
+          await vscode.commands.executeCommand("markdown.showPreviewToSide", PLAN_URI);
+        } catch {
+          // Fallback if the markdown extension is somehow disabled.
+          await vscode.window.showTextDocument(doc, {
+            viewColumn: vscode.ViewColumn.Beside,
+            preview: false,
+            preserveFocus: false,
+          });
+        }
       },
     ),
   );

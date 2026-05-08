@@ -189,6 +189,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.post({ type: "info", text: "Saved permission baseline to workspace settings." });
         return;
       }
+      case "mirrorToTerminal": {
+        const root = this.sessionStore.workspaceRoot();
+        const term = vscode.window.createTerminal({
+          name: "Claude Coder",
+          cwd: root ?? undefined,
+        });
+        term.show(true);
+        // sendText with addNewLine=false so the user can edit before pressing Enter,
+        // matching Cursor's "open in terminal" behaviour.
+        term.sendText(msg.command, false);
+        return;
+      }
     }
   }
 

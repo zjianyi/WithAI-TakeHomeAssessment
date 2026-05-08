@@ -135,6 +135,12 @@ export function App() {
         setUsage(m.usage);
       } else if (m.type === "modeChanged") {
         setInit((s) => ({ ...s, mode: m.mode }));
+        if (m.mode !== "plan") {
+          // Leaving plan mode: drop any accumulated plan content so the
+          // floating "Open plan view" button doesn't linger across modes.
+          setPlanContent("");
+          setPlanView("hidden");
+        }
       } else if (m.type === "permissionBaseline") {
         setInit((s) => ({
           ...s,
@@ -293,7 +299,10 @@ export function App() {
         <div className="transcript" ref={transcriptRef}>
           {items.length === 0 && <Welcome hasApiKey={init.hasApiKey} />}
           {renderEntries(collapsed)}
-          {planContent && (
+          {/* Only surface the "Open plan view" reopener while we're actually in
+              plan mode and a run isn't streaming — otherwise it persists across
+              modes and feels like a regression. */}
+          {init.mode === "plan" && planContent && !running && (
             <button
               className="plan-resume"
               onClick={() => setPlanView("review")}
