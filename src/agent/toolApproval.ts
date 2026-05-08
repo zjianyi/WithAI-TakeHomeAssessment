@@ -54,12 +54,17 @@ async function buildDiff(
   return undefined;
 }
 
+type AllowResult = { behavior: "allow"; updatedInput?: Record<string, unknown> };
+type DenyResult = { behavior: "deny"; message: string };
+export type PermResult = AllowResult | DenyResult;
+
 export class ToolApprovalBridge {
   private pending = new Map<
     string,
     {
-      resolve: (r: { behavior: "allow" } | { behavior: "deny"; message: string }) => void;
+      resolve: (r: PermResult) => void;
       timeout: NodeJS.Timeout;
+      input: Record<string, unknown>;
     }
   >();
 
@@ -77,12 +82,16 @@ export class ToolApprovalBridge {
     this.pending.clear();
   }
 
-  resolve(id: string, result: { behavior: "allow" } | { behavior: "deny"; message: string }): void {
+  resolve(id: string, result: PermResult): void {
     const entry = this.pending.get(id);
     if (!entry) return;
     clearTimeout(entry.timeout);
     this.pending.delete(id);
-    entry.resolve(result);
+    if (result.behavior === "allow") {
+      entry.resolve({ behavior: "allow", updatedInput: result.updatedInput ?? entry.input });
+    } else {
+      entry.resolve(result);
+    }
   }
 
   /** SDK-shaped canUseTool callback. */
@@ -95,7 +104,7 @@ export class ToolApprovalBridge {
       description?: string;
       toolUseID: string;
     },
-  ): Promise<{ behavior: "allow" } | { behavior: "deny"; message: string }> => {
+  ): Promise<PermResult> => {
     const id = `appr_${nextId++}`;
     const diffInfo = await buildDiff(toolName, input, this.cwd);
     const payload: ApprovalRequestPayload = {
@@ -109,14 +118,14 @@ export class ToolApprovalBridge {
       filePath: diffInfo?.filePath,
     };
 
-    return new Promise((resolve) => {
+    return new Promise<PermResult>((resolve) => {
       const timeout = setTimeout(() => {
         if (this.pending.delete(id)) {
           this.provider.post({ type: "approval-cancelled", id });
           resolve({ behavior: "deny", message: "Approval timed out after 120s." });
         }
       }, 120_000);
-      this.pending.set(id, { resolve, timeout });
+      this.pending.set(id, { resolve, timeout, input });
 
       const abortHandler = () => {
         if (this.pending.delete(id)) {

@@ -1,6 +1,19 @@
 import * as vscode from "vscode";
-import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk" with { "resolution-mode": "import" };
 import type { ChatViewProvider } from "../chat/ChatViewProvider";
+
+type QueryFn = (params: {
+  prompt: string | AsyncIterable<unknown>;
+  options?: Options;
+}) => AsyncIterable<SDKMessage>;
+
+let cachedQuery: QueryFn | null = null;
+async function loadQuery(): Promise<QueryFn> {
+  if (cachedQuery) return cachedQuery;
+  const mod = (await import("@anthropic-ai/claude-agent-sdk")) as { query: QueryFn };
+  cachedQuery = mod.query;
+  return cachedQuery;
+}
 import type { SecretsStore } from "../auth/secrets";
 import type { SessionStore } from "./sessionStore";
 import { ToolApprovalBridge } from "./toolApproval";
@@ -82,7 +95,8 @@ export class AgentRunner {
       | "acceptEdits"
       | "bypassPermissions";
     const systemPromptOverride = cfg.get<string>("systemPromptOverride", "").trim();
-    const allowedTools = cfg.get<string[]>("allowedTools", [
+    // The full set of tools available to Claude.
+    const enabledTools = cfg.get<string[]>("allowedTools", [
       "Read",
       "Write",
       "Edit",
@@ -92,6 +106,14 @@ export class AgentRunner {
       "WebSearch",
       "WebFetch",
     ]);
+    // In `default` permission mode, anything in `allowedTools` is pre-approved
+    // (no canUseTool prompt). Pre-approve safe read/search tools, gate
+    // mutating ones through the approval bridge.
+    const SAFE = new Set(["Read", "Glob", "Grep", "WebSearch", "WebFetch", "TodoWrite"]);
+    const preApproved =
+      permissionMode === "default"
+        ? enabledTools.filter((t) => SAFE.has(t))
+        : enabledTools;
 
     const cwd = this.sessionStore.workspaceRoot();
     const resume = resumeSessionId ?? this.sessionStore.get() ?? undefined;
@@ -106,7 +128,8 @@ export class AgentRunner {
       cwd: cwd ?? undefined,
       model,
       maxTurns,
-      allowedTools,
+      allowedTools: preApproved,
+      tools: enabledTools,
       permissionMode,
       abortController: this.abortController,
       env: {
@@ -120,7 +143,8 @@ export class AgentRunner {
     };
 
     try {
-      for await (const m of query({ prompt, options: opts }) as AsyncIterable<SDKMessage>) {
+      const query = await loadQuery();
+      for await (const m of query({ prompt, options: opts })) {
         await this.handleMessage(m);
       }
     } catch (err: unknown) {

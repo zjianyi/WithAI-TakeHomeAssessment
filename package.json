@@ -113,7 +113,7 @@
     "watch:extension": "esbuild src/extension.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist/extension.js --external:vscode --external:@anthropic-ai/claude-agent-sdk --watch",
     "watch:webview": "vite build --watch --config webview-ui/vite.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p webview-ui/tsconfig.json",
-    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository --skip-license"
+    "package": "npm run build && vsce package --allow-missing-repository --skip-license --baseContentUrl file:./ --baseImagesUrl file:./"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.133",
